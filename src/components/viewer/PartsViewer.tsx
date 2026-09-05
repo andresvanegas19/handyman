@@ -9,7 +9,7 @@ import styles from "./PartsViewer.module.css";
 
 const ViewerCanvas = dynamic(() => import("./ViewerCanvas"), {
   ssr: false,
-  loading: () => <div className={styles.loading}>Preparing your 3D view…</div>,
+  loading: () => null,
 });
 const EMPTY_PART_IDS: string[] = [];
 
@@ -17,7 +17,9 @@ export interface PartsViewerProps {
   kind?: AssemblyKind;
   assembly?: ReviewedAssembly;
   activePartIds?: string[];
-  onPartSelect?: (id: string) => void;
+  onPartSelect?: (id: string | null) => void;
+  /** Administrative inspection only; never changes an assembly's review status. */
+  reviewMode?: boolean;
 }
 
 class CanvasBoundary extends Component<{ children: ReactNode; onError: (message: string) => void }, { failed: boolean }> {
@@ -41,12 +43,27 @@ function supportsWebGL(): boolean {
   }
 }
 
-function Diagram({ kind, exploded, selected, hidden }: { kind: AssemblyKind; exploded: boolean; selected: string | null; hidden: string[] }) {
-  const fill = (id: string, base = "#b79c6c") => selected === id ? "#789b80" : base;
+function Diagram({ kind, exploded, selected, hidden, highlighted }: { kind: AssemblyKind; exploded: boolean; selected: string | null; hidden: string[]; highlighted: string[] }) {
+  const fill = (id: string, base = "#b79c6c") => selected === id || highlighted.includes(id) ? "#789b80" : base;
   const opacity = (id: string) => hidden.includes(id) ? 0.12 : 1;
   return <svg viewBox="0 0 460 300" className={styles.diagram} role="img" aria-label={`Illustrative ${kind} diagram, not a reviewed model. Labeled part descriptions follow.`}>
     <ellipse cx="230" cy="252" rx="110" ry="15" fill="#233526" opacity=".07" />
-    {kind === "hinge" ? <g transform="translate(230 140) rotate(-12)">
+    {kind === "door" ? <g transform="translate(230 145)">
+      <g transform={`translate(${exploded ? -60 : 0} 0)`} opacity={opacity("door-frame")}>
+        <path d="M-63 100V-110H63V100" fill="none" stroke={fill("door-frame", "#d6c5a5")} strokeWidth="13"/>
+      </g>
+      <g transform={`translate(${exploded ? 15 : 0} ${exploded ? 12 : 0})`} opacity={opacity("door-panel")}>
+        <rect x="-53" y="-100" width="106" height="200" fill={fill("door-panel", "#b99159")}/>
+        {[-43, 7].flatMap(x => [-88, 9].map(y => <rect key={`${x}-${y}`} x={x} y={y} width="36" height="79" rx="2" fill="none" stroke="#866c47" strokeWidth="2"/>))}
+      </g>
+      <g transform={`translate(${exploded ? -27 : 0} ${exploded ? -8 : 0})`} opacity={opacity("door-hinges")}>
+        {[-75, 0, 75].map(y => <rect key={y} x="-61" y={y - 8} width="12" height="16" rx="2" fill={fill("door-hinges")} stroke="#8a754e"/>)}
+      </g>
+      <g transform={`translate(${exploded ? 76 : 0} 0)`} opacity={opacity("door-handle")}>
+        <circle cx="40" cy="2" r="7" fill={fill("door-handle", "#dfc58b")} stroke="#8a754e"/>
+        <rect x="22" y="-1" width="22" height="5" rx="2" fill={fill("door-handle", "#dfc58b")} stroke="#8a754e"/>
+      </g>
+    </g> : kind === "hinge" ? <g transform="translate(230 140) rotate(-12)">
       <g transform={`translate(${exploded ? -38 : 0} 0)`} opacity={opacity("hinge-frame")}>
         <rect x="-85" y="-77" width="78" height="154" rx="5" fill={fill("hinge-frame")} stroke="#8a754e" />
         <path d="M-13 -76v152" stroke="#dac69d" strokeWidth="8" />
@@ -87,16 +104,19 @@ function Diagram({ kind, exploded, selected, hidden }: { kind: AssemblyKind; exp
   </svg>;
 }
 
-function PartsViewerInstance({ kind = "hinge", assembly, activePartIds = EMPTY_PART_IDS, onPartSelect }: PartsViewerProps) {
+function PartsViewerInstance({ kind = "hinge", assembly, activePartIds = EMPTY_PART_IDS, onPartSelect, reviewMode = false }: PartsViewerProps) {
   const parts = assembly ? assembly.parts : PREVIEW_PARTS[kind];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
   const [isolateId, setIsolateId] = useState<string | null>(null);
   const [exploded, setExploded] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
-  const [error, setError] = useState<string | null>(assembly && !assembly.reviewed ? "This assembly has not been reviewed. Its 3D model is unavailable until review is complete." : null);
+  const [error, setError] = useState<string | null>(assembly && !assembly.reviewed && !reviewMode ? "This assembly has not been reviewed. Its 3D model is unavailable until review is complete." : null);
   const [ready, setReady] = useState(false);
   const [resetKey, setResetKey] = useState(0);
+  const [retryKey, setRetryKey] = useState(0);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [focusKey, setFocusKey] = useState(0);
   const labelId = useId();
   useEffect(() => { setAvailable(supportsWebGL()); }, []);
   const reportError = useCallback((message: string) => { setError(message); setReady(false); }, []);
@@ -112,14 +132,19 @@ function PartsViewerInstance({ kind = "hinge", assembly, activePartIds = EMPTY_P
     setHiddenIds([]);
     setIsolateId(null);
     setExploded(false);
+    setFocusId(null);
+    setReady(false);
     setResetKey((key) => key + 1);
+    onPartSelect?.(null);
   }
   function retry() {
-    if (assembly && !assembly.reviewed) return;
+    if (assembly && !assembly.reviewed && !reviewMode) return;
     setError(null);
     setAvailable(supportsWebGL());
     setReady(false);
+    setFocusId(null);
     setResetKey((key) => key + 1);
+    setRetryKey((key) => key + 1);
   }
   const selected = parts.find((part) => part.id === selectedId);
   const unknownHighlights = activePartIds.filter((id) => !parts.some((part) => part.id === id));
@@ -133,25 +158,36 @@ function PartsViewerInstance({ kind = "hinge", assembly, activePartIds = EMPTY_P
         <span className={styles.interactive}>{fallback ? "PARTS VIEW" : "INTERACTIVE 3D"}</span>
       </div>
       <div className={styles.stage}>
-        <div className={styles.modelBadge}><span />{assembly ? assembly.reviewed ? "Reviewed assembly" : "Unreviewed assembly · unavailable" : "Illustrative preview · not a Tripo model"}</div>
-        {!assembly && (available !== true || fallback) && <Diagram kind={kind} exploded={exploded} selected={selectedId} hidden={diagramHidden} />}
-        {assembly && (available !== true || fallback) && <div className={styles.textFallback}><Box size={40} strokeWidth={1} /><strong>{fallback ? "Explore the labeled parts below" : "Preparing the reviewed model"}</strong><span>No substitute model is shown.</span></div>}
-        {available === true && !error && <CanvasBoundary key={resetKey} onError={reportError}>
-          <ViewerCanvas kind={kind} assembly={assembly} parts={parts} selectedId={selectedId} hiddenIds={hiddenIds} isolateId={isolateId} exploded={exploded} activePartIds={activePartIds} resetKey={resetKey} onPartSelect={selectPart} onError={reportError} onReady={markReady} />
+        <div className={styles.modelBadge}><span />{assembly ? assembly.reviewed ? "Reviewed assembly" : reviewMode ? "Unreviewed admin preview — not repair guidance" : "Unreviewed assembly · unavailable" : "Illustrative preview · not a Tripo model"}</div>
+        {!assembly && (available !== true || fallback) && <Diagram kind={kind} exploded={exploded} selected={selectedId} hidden={diagramHidden} highlighted={activePartIds}/>}
+        {assembly && (available !== true || fallback) && <div className={styles.textFallback}><Box size={40} strokeWidth={1} /><strong>{fallback ? "Explore the labeled parts below" : assembly.reviewed ? "Preparing the reviewed model" : "Preparing an unreviewed admin preview"}</strong><span>No substitute model is shown.</span></div>}
+        {available === true && !error && <CanvasBoundary key={retryKey} onError={reportError}>
+          <ViewerCanvas kind={kind} assembly={assembly} parts={parts} selectedId={selectedId} hiddenIds={hiddenIds} isolateId={isolateId} exploded={exploded} activePartIds={activePartIds} resetKey={resetKey} focusId={focusId} focusKey={focusKey} onPartSelect={selectPart} onError={reportError} onReady={markReady} />
         </CanvasBoundary>}
-        {available === true && !error && !ready && <div className={styles.loading} role="status">Loading {assembly ? "reviewed model" : "illustrative preview"}…</div>}
+        {available === true && !error && !ready && <div className={styles.loading} role="status">Loading {assembly ? assembly.reviewed ? "reviewed model" : "unreviewed admin preview" : "illustrative preview"}…</div>}
         <div className={styles.stageHint}>{fallback ? "Text alternative · every part is described below" : "Drag to rotate · scroll or pinch to zoom"}</div>
       </div>
       {fallback && <div className={styles.notice} role={error ? "alert" : "status"}>
-        <span>{error || (assembly ? "3D is unavailable in this browser. The reviewed part descriptions remain available below." : "3D is unavailable in this browser. The illustrative diagram and labeled part descriptions remain available.")}</span>
-        {(!assembly || assembly.reviewed) && <button type="button" onClick={retry}>Retry 3D</button>}
+        <span>{error || (assembly ? "3D is unavailable in this browser. The labeled part descriptions remain available below." : "3D is unavailable in this browser. The illustrative diagram and labeled part descriptions remain available.")}</span>
+        {(!assembly || assembly.reviewed || reviewMode) && <button type="button" onClick={retry}>Retry 3D</button>}
       </div>}
+      {assembly && !assembly.reviewed && reviewMode && <p className={styles.notice} role="note">Admin inspection only. Geometry, labels, part mappings, applicability, and usage rights still require approval. This preview does not publish or approve the assembly.</p>}
       {!!unknownHighlights.length && <p className={styles.notice} role="alert">This step references parts that are not mapped in this model. Check the written guide; do not infer a matching component.</p>}
       <div className={styles.toolbar} aria-label="Assembly view controls">
         <button type="button" onClick={() => setExploded((current) => !current)} aria-pressed={exploded} className={exploded ? styles.engaged : ""}><Layers3 size={16} />{exploded ? "Assemble view" : "Explode view"}</button>
-        <button type="button" onClick={() => setIsolateId((current) => current ? null : selectedId)} disabled={!selectedId} aria-pressed={!!isolateId}><Maximize2 size={15} />{isolateId ? "Show all parts" : "Isolate part"}</button>
+        <button type="button" disabled={!selectedId || !ready || fallback} onClick={() => {
+          if (!selectedId) return;
+          setHiddenIds(current => current.filter(id => id !== selectedId));
+          setFocusId(selectedId);
+          setFocusKey(key => key + 1);
+        }}>Focus part</button>
+        <button type="button" onClick={() => {
+          if (isolateId) { setIsolateId(null); setHiddenIds([]); }
+          else setIsolateId(selectedId);
+        }} disabled={!selectedId} aria-pressed={!!isolateId}><Maximize2 size={15} />{isolateId ? "Show all parts" : "Isolate part"}</button>
         <button type="button" className={styles.reset} onClick={reset} aria-label="Reset assembly view"><RotateCcw size={15} /><span>Reset</span></button>
       </div>
+      <p className={styles.disclaimer}>Explode view separates the model on screen. Select a part, then isolate it to inspect it alone. This does not authorize taking the real object apart.</p>
       <div className={styles.partsHeading}><span>MEET THE PARTS</span><span>{parts.length} labeled parts</span></div>
       <ul className={styles.partList} aria-label="Assembly parts">
         {parts.map((part, index) => {
@@ -167,16 +203,16 @@ function PartsViewerInstance({ kind = "hinge", assembly, activePartIds = EMPTY_P
             <button type="button" className={styles.visibility} aria-label={`${hidden ? "Show" : "Hide"} ${part.label}`} aria-pressed={!hidden} onClick={() => setHiddenIds((current) => hidden ? current.filter((id) => id !== part.id) : [...current, part.id])}>
               {hidden ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
-            {(active || fallback) && <p className={styles.partDescription}>{part.description}</p>}
+            {(active || stepActive || fallback) && <p className={styles.partDescription}>{part.description}</p>}
           </li>;
         })}
       </ul>
       {selected && <p className={styles.selectionStatus} role="status">{selected.label} selected{isolateId ? " · isolated" : ""}{hiddenIds.includes(selected.id) ? " · hidden" : ""}.</p>}
-      <p className={styles.disclaimer}>{assembly ? "A reviewed reference, not a scan of your home." : "Generic shapes for exploration, not reviewed repair guidance."} Exploded views explain parts—not safe disassembly or actual dimensions.</p>
+      <p className={styles.disclaimer}>{assembly ? assembly.reviewed ? "A reviewed reference, not a scan of your home." : "An unreviewed asset, not approved repair guidance." : "Generic shapes for exploration, not reviewed repair guidance."} Exploded views explain parts—not safe disassembly or actual dimensions.</p>
     </section>
   );
 }
 
 export default function PartsViewer(props: PartsViewerProps) {
-  return <PartsViewerInstance key={`${props.kind ?? "hinge"}:${props.assembly?.url ?? "preview"}:${props.assembly?.reviewed ?? false}`} {...props} />;
+  return <PartsViewerInstance key={`${props.kind ?? "hinge"}:${props.assembly?.url ?? "preview"}:${props.assembly?.reviewed ?? false}:${props.reviewMode ?? false}`} {...props} />;
 }

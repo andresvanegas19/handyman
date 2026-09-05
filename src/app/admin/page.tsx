@@ -1,0 +1,2 @@
+import AdminDashboard from "@/components/admin-dashboard";
+export default function AdminPage(){return <div className="container page-section"><div className="page-heading"><span className="eyebrow">BEHIND THE GUIDANCE</span><h1>The review workbench.</h1><p>A protected workspace for careful content review, real catalog asset generation, and deliberate publication.</p></div><AdminDashboard/></div>;}

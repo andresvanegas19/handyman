@@ -1,0 +1,5 @@
+.convex/
+.env*
+.next-dev/
+test-results/
+playwright-report/

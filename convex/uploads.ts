@@ -65,7 +65,7 @@ export const attach = internalMutation({
     await ctx.db.patch(media._id, { state: "ready", mime: args.mime, bytes: args.bytes, durationSeconds: args.durationSeconds });
     await cancelProblemJobs(ctx, problem._id);
     await ctx.db.patch(problem._id, {
-      revision: problem.revision + 1, state: "draft", activeJobId: undefined, failure: undefined,
+      revision: problem.revision + 1, state: "draft", activeJobId: undefined, selectedGuideVersionId: undefined, failure: undefined,
       ...(media.kind === "audio" ? { transcript: "", transcriptConfirmed: false } : {}), updatedAt: Date.now(),
     });
   },
@@ -99,15 +99,16 @@ export const remove = mutation({
     await ctx.db.delete(media._id);
     await cancelProblemJobs(ctx, problem._id);
     await ctx.db.patch(problem._id, {
-      revision: problem.revision + 1, state: "draft", activeJobId: undefined,
+      revision: problem.revision + 1, state: "draft", activeJobId: undefined, selectedGuideVersionId: undefined,
       ...(media.kind === "audio" ? { transcript: "", transcriptConfirmed: false } : {}),
     });
   },
 });
 export const privateFile = internalQuery({
-  args: { mediaId: v.id("media"), owner: v.string() },
+  args: { mediaId: v.string(), owner: v.string() },
   handler: async (ctx, args) => {
-    const media = await ctx.db.get(args.mediaId);
+    const id = ctx.db.normalizeId("media", args.mediaId);
+    const media = id ? await ctx.db.get(id) : null;
     if (!media || media.owner !== args.owner || media.state !== "ready" || !media.storageId) return null;
     if (!await ctx.db.get(media.problemId)) return null;
     return { storageId: media.storageId, mime: media.mime };

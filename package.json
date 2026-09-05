@@ -10,11 +10,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:visual": "playwright test --config playwright.visual.config.ts",
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.36.0",
+    "@convex-dev/auth": "^0.0.95",
     "@react-three/drei": "^10.7.0",
     "@react-three/fiber": "^9.4.0",
     "convex": "^1.31.0",

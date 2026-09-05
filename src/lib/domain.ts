@@ -1,11 +1,19 @@
 export type Outcome = "worked" | "partly" | "not_worked";
 export type Category = "Doors & windows" | "Furniture" | "Plumbing";
-export type AssemblyKind = "hinge" | "knob" | "aerator";
+export type AssemblyKind = "door" | "hinge" | "knob" | "aerator";
 
 export interface GuideStep {
   title: string;
   description: string;
   partIds: string[];
+  visual?: {
+    location: string;
+    lookFor: string;
+    motion: string;
+    force: string;
+    risk: string;
+    check: string;
+  };
 }
 
 export interface Guide {

@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { webmDuration } from "./webm";
 
 const invalid = () => new ConvexError("Unsupported or invalid media. Use a JPEG/PNG/WebP photo, or a WAV/MP4/WebM audio file with duration metadata.");
 function text(bytes: Uint8Array, start: number, length: number) {
@@ -19,13 +20,32 @@ export function inspectMedia(bytes: Uint8Array, kind: "photo" | "audio") {
   if (text(bytes, 0, 4) === "RIFF" && text(bytes, 8, 4) === "WAVE") {
     mime = "audio/wav";
     let rate = 0;
+    let blockAlign = 0;
+    let dataBytes = 0;
     for (let offset = 12; offset + 8 <= bytes.length;) {
       const size = view.getUint32(offset + 4, true);
       if (offset + 8 + size > bytes.length) throw invalid();
-      if (text(bytes, offset, 4) === "fmt " && size >= 16) rate = view.getUint32(offset + 16, true);
-      if (text(bytes, offset, 4) === "data" && rate) duration = size / rate;
+      if (text(bytes, offset, 4) === "fmt " && size >= 16) {
+        const format = view.getUint16(offset + 8, true);
+        const channels = view.getUint16(offset + 10, true);
+        const sampleRate = view.getUint32(offset + 12, true);
+        const claimedRate = view.getUint32(offset + 16, true);
+        const alignment = view.getUint16(offset + 20, true);
+        const bits = view.getUint16(offset + 22, true);
+        if (rate || format !== 1 || ![1, 2].includes(channels) || sampleRate < 8000 || sampleRate > 96000 ||
+          ![8, 16, 24, 32].includes(bits) || alignment !== channels * bits / 8 || claimedRate !== sampleRate * alignment) {
+          throw new ConvexError("Use a valid mono or stereo PCM WAV recording.");
+        }
+        blockAlign = alignment;
+        rate = sampleRate * blockAlign;
+      }
+      if (text(bytes, offset, 4) === "data") {
+        if (!rate || size % blockAlign !== 0) throw invalid();
+        dataBytes += size;
+      }
       offset += 8 + size + size % 2;
     }
+    duration = dataBytes / rate;
   } else if (text(bytes, 4, 4) === "ftyp") {
     mime = "audio/mp4";
     function boxes(start: number, end: number) {
@@ -48,24 +68,7 @@ export function inspectMedia(bytes: Uint8Array, kind: "photo" | "audio") {
     boxes(0, bytes.length);
   } else if (view.getUint32(0) === 0x1a45dfa3) {
     mime = "audio/webm";
-    // WebM recorders must finalize the duration before upload. Unknown-duration streams are rejected.
-    let scale = 1_000_000;
-    let ticks = 0;
-    for (let i = 4; i + 12 < bytes.length; i++) {
-      if (bytes[i] === 0x2a && bytes[i + 1] === 0xd7 && bytes[i + 2] === 0xb1) {
-        const size = bytes[i + 3] & 0x7f;
-        if (size >= 1 && size <= 4 && (bytes[i + 3] & 0x80)) {
-          scale = 0;
-          for (let j = 0; j < size; j++) scale = scale * 256 + bytes[i + 4 + j];
-        }
-      }
-      if (bytes[i] === 0x44 && bytes[i + 1] === 0x89) {
-        const size = bytes[i + 2] & 0x7f;
-        if (size === 4) ticks = view.getFloat32(i + 3);
-        if (size === 8) ticks = view.getFloat64(i + 3);
-      }
-    }
-    duration = ticks * scale / 1_000_000_000;
+    try { duration = webmDuration(bytes); } catch { throw invalid(); }
   } else throw invalid();
   if (!Number.isFinite(duration) || duration <= 0 || duration > 60) throw new ConvexError("Audio must have verifiable duration metadata and be no longer than 60 seconds. Use a finalized WAV or MP4 file.");
   return { mime, durationSeconds: duration };

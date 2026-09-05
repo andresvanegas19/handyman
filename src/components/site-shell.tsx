@@ -4,8 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { ArrowUpRight, House, Menu, X, Wrench } from "lucide-react";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
-import { hasClerk } from "@/lib/config";
 
 export function Brand() {
   return <Link href="/" className="brand" aria-label="Handyman home"><span className="brand-mark"><House size={25}/><Wrench size={12}/></span>Handyman<span className="brand-dot">.</span></Link>;
@@ -21,8 +19,8 @@ export function Header() {
       <Link onClick={() => setOpen(false)} href="/catalog" aria-current={path.startsWith("/catalog") ? "page" : undefined}>Explore fixes</Link>
       <Link onClick={() => setOpen(false)} href="/problems" aria-current={path === "/problems" ? "page" : undefined}>My repairs</Link>
     </nav>
-    <div className="header-actions">{hasClerk && <><SignedIn><UserButton/></SignedIn><SignedOut><SignInButton mode="modal"><button className="sign-in">Sign in</button></SignInButton></SignedOut></>}
-      <Link href="/problems/new" className="button button-small header-cta">Describe a problem <ArrowUpRight size={16}/></Link>
+    <div className="header-actions">
+      <Link href="/problems/new" aria-label="Describe a problem" className="button button-small header-cta">Describe a problem <ArrowUpRight size={16}/></Link>
       <button className="menu-button icon-button" aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? <X/> : <Menu/>}</button>
     </div>
   </div></header>;

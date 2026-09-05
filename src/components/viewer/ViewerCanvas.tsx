@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, type ThreeEvent } from "@react-three/fiber";
-import { Bounds, ContactShadows, Html, OrbitControls } from "@react-three/drei";
-import { Box3, Color, Group, LoadingManager, Material, Mesh, MeshStandardMaterial, Object3D, Texture, Vector3 } from "three";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Bounds, ContactShadows, Html, OrbitControls, useBounds } from "@react-three/drei";
+import { Box3, Color, Group, LoadingManager, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, Texture, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AssemblyKind, AssemblyPart, ReviewedAssembly } from "@/lib/domain";
-import { applyExplode, capturePositions, explodedPosition, MAX_GLB_BYTES, resolvePartNodes, validateSelfContainedGlb } from "./model-utils";
+import type { PrivateMappedScene } from "@/lib/visual-repair";
+import { applyExplode, capturePositions, combinedPartBounds, explodedPosition, MAX_GLB_BYTES, resolvePartNodes, restoreSourceNodeNames, validateSelfContainedGlb } from "./model-utils";
 
 export interface ViewerCanvasProps {
   kind: AssemblyKind;
   assembly?: ReviewedAssembly;
+  privateScene?: PrivateMappedScene;
   parts: AssemblyPart[];
   selectedId: string | null;
   hiddenIds: string[];
@@ -18,12 +20,15 @@ export interface ViewerCanvasProps {
   exploded: boolean;
   activePartIds: string[];
   resetKey: number;
+  focusId: string | null;
+  focusIds?: string[];
+  focusKey: number;
   onPartSelect: (id: string) => void;
   onError: (message: string) => void;
   onReady: () => void;
 }
 
-function finishModel(root: Object3D) {
+export function finishModel(root: Object3D) {
   root.traverse((node) => {
     if (node instanceof Mesh) {
       node.geometry.dispose();
@@ -37,13 +42,13 @@ function finishModel(root: Object3D) {
   });
 }
 
-async function loadModel(url: string, signal: AbortSignal): Promise<Group> {
+export async function loadModel(url: string, signal: AbortSignal, localPreview = false): Promise<Group> {
   const parsedUrl = new URL(url, window.location.origin);
-  if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
-    throw new Error("The reviewed model URL is not supported.");
+  if (!(["http:", "https:"].includes(parsedUrl.protocol) || (localPreview && parsedUrl.protocol === "blob:")) || parsedUrl.username || parsedUrl.password) {
+    throw new Error("The model URL is not supported.");
   }
   const response = await fetch(parsedUrl, { signal, credentials: "omit", referrerPolicy: "no-referrer" });
-  if (!response.ok) throw new Error(`The reviewed model could not be downloaded (${response.status}).`);
+  if (!response.ok) throw new Error(`The model could not be downloaded (${response.status}).`);
   if (Number(response.headers.get("content-length")) > MAX_GLB_BYTES) throw new Error("The model exceeds the 10 MB viewer limit.");
   const reader = response.body?.getReader();
   if (!reader) throw new Error("The model response could not be read.");
@@ -76,19 +81,21 @@ async function loadModel(url: string, signal: AbortSignal): Promise<Group> {
     return resourceUrl;
   });
   const gltf = await new GLTFLoader(manager).parseAsync(bytes.buffer, "");
+  restoreSourceNodeNames(gltf.scene, (node) => gltf.parser.associations.get(node)?.nodes, gltf.parser.json.nodes ?? []);
   return gltf.scene;
 }
 
 function ReviewedModel(props: ViewerCanvasProps) {
-  const { assembly, parts, onError, onReady } = props;
+  const { assembly, privateScene, parts, onError } = props;
+  const url = privateScene?.url ?? assembly?.url;
   const [model, setModel] = useState<Group | null>(null);
   useEffect(() => {
-    if (!assembly) return;
+    if (!url) return;
     const abort = new AbortController();
     const timeout = window.setTimeout(() => abort.abort(), 30_000);
     let loaded: Group | undefined;
     let cancelled = false;
-    loadModel(assembly.url, abort.signal).then((scene) => {
+    loadModel(url, abort.signal, !!privateScene).then((scene) => {
       if (cancelled) {
         finishModel(scene);
         return;
@@ -105,9 +112,8 @@ function ReviewedModel(props: ViewerCanvasProps) {
       });
       for (const material of sourceMaterials) material.dispose();
       setModel(scene);
-      onReady();
     }).catch((error: unknown) => {
-      if (!cancelled) onError(abort.signal.aborted ? "The model download timed out. Check your connection and retry." : error instanceof Error ? error.message : "The reviewed model could not be loaded.");
+      if (!cancelled) onError(abort.signal.aborted ? "The model download timed out. Check your connection and retry." : error instanceof Error ? error.message : "The model could not be loaded.");
     }).finally(() => window.clearTimeout(timeout));
     return () => {
       cancelled = true;
@@ -115,12 +121,13 @@ function ReviewedModel(props: ViewerCanvasProps) {
       abort.abort();
       if (loaded) finishModel(loaded);
     };
-  }, [assembly, parts, onError, onReady]);
+  }, [url, privateScene, parts, onError]);
   return model ? <MappedModel {...props} model={model} /> : null;
 }
 
 function MappedModel({ model, ...props }: ViewerCanvasProps & { model: Group }) {
-  const { parts, exploded, hiddenIds, isolateId, selectedId, activePartIds } = props;
+  const bounds = useBounds();
+  const { parts, exploded, hiddenIds, isolateId, selectedId, activePartIds, privateScene, onReady, onError } = props;
   const mapping = useMemo(() => resolvePartNodes(model, parts), [model, parts]);
   const originals = useMemo(() => capturePositions(mapping), [mapping]);
   const dimensions = useMemo(() => {
@@ -142,6 +149,22 @@ function MappedModel({ model, ...props }: ViewerCanvasProps & { model: Group }) 
     }
     return map;
   }, [mapping]);
+  const unlitColors = useMemo(() => {
+    const colors = new Map<MeshBasicMaterial, Color>();
+    model.traverse(node => {
+      if (!(node instanceof Mesh)) return;
+      for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
+        if (material instanceof MeshBasicMaterial) colors.set(material, material.color.clone());
+      }
+    });
+    return colors;
+  }, [model]);
+  useEffect(() => {
+    try {
+      if (privateScene) for (const part of parts) combinedPartBounds(model, [part.id]);
+      onReady();
+    } catch (error) { onError(error instanceof Error ? error.message : "Invalid model targets."); }
+  }, [model, parts, materials, privateScene, onReady, onError]);
   useEffect(() => {
     applyExplode(mapping, originals, parts, exploded ? 1 : 0);
     model.traverse((node) => {
@@ -150,6 +173,10 @@ function MappedModel({ model, ...props }: ViewerCanvasProps & { model: Group }) 
       node.visible = id ? !hiddenIds.includes(id) && (!isolateId || isolateId === id) : !isolateId;
       const highlighted = id && (id === selectedId || activePartIds.includes(id));
       for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
+        if (material instanceof MeshBasicMaterial) {
+          const original = unlitColors.get(material);
+          if (original) material.color.copy(highlighted ? new Color("#91ad91") : original);
+        }
         if (!(material instanceof MeshStandardMaterial)) continue;
         const original = materials.get(material);
         if (!original) continue;
@@ -157,7 +184,8 @@ function MappedModel({ model, ...props }: ViewerCanvasProps & { model: Group }) 
         material.emissiveIntensity = highlighted ? 0.5 : original.intensity;
       }
     });
-  }, [mapping, originals, model, parts, exploded, hiddenIds, isolateId, selectedId, activePartIds, materials]);
+  }, [mapping, originals, model, parts, exploded, hiddenIds, isolateId, selectedId, activePartIds, materials, unlitColors]);
+  useEffect(() => { bounds.refresh().clip().fit(); }, [bounds, model, exploded]);
   function select(event: ThreeEvent<MouseEvent>) {
     const id = event.object.userData.viewerPartId as string | undefined;
     if (id) {
@@ -199,6 +227,7 @@ function PreviewPart({ id, base = [0, 0, 0], color = brass, children, ...props }
   return (
     <group
       ref={group}
+      userData={{ viewerPartId: id }}
       position={explodedPosition(base, part.explodeOffset, props.exploded ? 1 : 0)}
       visible={!props.hiddenIds.includes(id) && (!props.isolateId || props.isolateId === id)}
       onClick={(event) => { event.stopPropagation(); props.onPartSelect(id); }}
@@ -224,6 +253,36 @@ function Screw({ position }: { position: [number, number, number] }) {
       <mesh position={[0, 0.219, 0]}><boxGeometry args={[0.026, 0.008, 0.145]} /><meshStandardMaterial color="#675431" /></mesh>
     </group>
   );
+}
+
+function Door(props: ViewerCanvasProps) {
+  return <group>
+    <PreviewPart {...props} id="door-frame" color="#d6c5a5">
+      {[-0.89, 0.89].map(x => <mesh key={x} position={[x, 0, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.15, 3.25, 0.3]}/><meshStandardMaterial color="#d6c5a5" roughness={0.8}/>
+      </mesh>)}
+      <mesh position={[0, 1.55, 0]} castShadow><boxGeometry args={[1.93, 0.15, 0.3]}/><meshStandardMaterial color="#d6c5a5" roughness={0.8}/></mesh>
+    </PreviewPart>
+    <PreviewPart {...props} id="door-panel" color="#b99159">
+      <mesh castShadow receiveShadow><boxGeometry args={[1.6, 3, 0.13]}/><meshStandardMaterial color="#b99159" roughness={0.7}/></mesh>
+      {[-1, 1].flatMap(side => [-0.38, 0.38].flatMap(x => [-0.72, 0.72].map(y => <mesh key={`${side}-${x}-${y}`} position={[x, y, side * 0.072]} castShadow>
+        <boxGeometry args={[0.57, 1.12, 0.025]}/><meshStandardMaterial color="#b99159" roughness={0.85}/>
+      </mesh>)))}
+    </PreviewPart>
+    <PreviewPart {...props} id="door-hinges">
+      {[-1.1, 0, 1.1].map(y => <group key={y} position={[-0.81, y, 0.13]}>
+        <mesh castShadow><cylinderGeometry args={[0.04, 0.04, 0.22, 16]}/><Metal/></mesh>
+        <mesh castShadow position={[0.045, 0, -0.025]}><boxGeometry args={[0.18, 0.2, 0.03]}/><Metal/></mesh>
+      </group>)}
+    </PreviewPart>
+    <PreviewPart {...props} id="door-handle" base={[0.64, -0.06, 0]}>
+      {[-1, 1].map(side => <group key={side} position={[0, 0, side * 0.1]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.095, 0.095, 0.04, 24]}/><Metal/></mesh>
+        <mesh position={[0, 0, side * 0.07]} castShadow><boxGeometry args={[0.05, 0.05, 0.14]}/><Metal/></mesh>
+        <mesh position={[-0.12, 0, side * 0.13]} castShadow><boxGeometry args={[0.28, 0.055, 0.06]}/><Metal/></mesh>
+      </group>)}
+    </PreviewPart>
+  </group>;
 }
 
 function Hinge(props: ViewerCanvasProps) {
@@ -291,36 +350,73 @@ function Aerator(props: ViewerCanvasProps) {
 }
 
 function Preview(props: ViewerCanvasProps) {
-  const { onReady } = props;
+  const bounds = useBounds();
+  const { onReady, exploded } = props;
   useEffect(() => { onReady(); }, [onReady]);
-  return props.kind === "knob" ? <Knob {...props} /> : props.kind === "aerator" ? <Aerator {...props} /> : <Hinge {...props} />;
+  useEffect(() => { bounds.refresh().clip().fit(); }, [bounds, exploded]);
+  return props.kind === "door" ? <Door {...props} /> : props.kind === "knob" ? <Knob {...props} /> : props.kind === "aerator" ? <Aerator {...props} /> : <Hinge {...props} />;
+}
+
+function FocusableAssembly(props: ViewerCanvasProps) {
+  const root = useRef<Group>(null);
+  const bounds = useBounds();
+  const { focusId, focusIds, focusKey, onError } = props;
+  useEffect(() => {
+    const ids = focusIds?.length ? focusIds : focusId ? [focusId] : [];
+    if (!root.current || !ids.length) return;
+    try { bounds.refresh(combinedPartBounds(root.current, ids)).clip().fit(); }
+    catch (error) { onError(error instanceof Error ? error.message : "The model target could not be located."); }
+  }, [bounds, focusId, focusIds, focusKey, onError]);
+  return <group ref={root}>{props.assembly || props.privateScene ? <ReviewedModel {...props}/> : <Preview {...props}/>}</group>;
+}
+
+function ContextLossHandler({ onError }: Pick<ViewerCanvasProps, "onError">) {
+  const gl = useThree(state => state.gl);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const lost = (event: Event) => {
+      event.preventDefault();
+      onError("The 3D graphics context was lost. Stop working on the repair and retry the viewer.");
+    };
+    canvas.addEventListener("webglcontextlost", lost);
+    return () => canvas.removeEventListener("webglcontextlost", lost);
+  }, [gl, onError]);
+  return null;
+}
+
+function Unavailable({ onError }: Pick<ViewerCanvasProps, "onError">) {
+  useEffect(() => { onError("WebGL is unavailable in this browser. Instructions remain locked. Enable 3D graphics or try another browser."); }, [onError]);
+  return null;
+}
+
+export function PrivateMappedCanvas({ scene, activePartIds, focusIds, focusKey, onError, onReady }: {
+  scene: PrivateMappedScene; activePartIds: string[]; focusIds: string[]; focusKey: number;
+  onError: (message: string) => void; onReady: () => void;
+}) {
+  return <ViewerCanvas kind="hinge" privateScene={scene} parts={scene.parts} activePartIds={activePartIds} focusIds={focusIds} focusKey={focusKey} focusId={null} resetKey={0} selectedId={null} hiddenIds={[]} isolateId={null} exploded={false} onPartSelect={() => {}} onError={onError} onReady={onReady}/>;
 }
 
 export default function ViewerCanvas(props: ViewerCanvasProps) {
+  const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   return (
     <Canvas
       shadows
       dpr={[1, 1.7]}
       camera={{ position: [4.6, 3.3, 6.8], fov: 38 }}
       gl={{ antialias: true, alpha: true }}
-      fallback={<span>3D is not supported. Use the labeled parts list.</span>}
-      onCreated={({ gl }) => {
-        gl.domElement.addEventListener("webglcontextlost", (event) => {
-          event.preventDefault();
-          props.onError("The 3D graphics context was lost. Use the part descriptions below, or retry the viewer.");
-        }, { once: true });
-      }}
+      fallback={props.privateScene ? <Unavailable onError={props.onError}/> : <span>3D is not supported. Use the labeled parts list.</span>}
       aria-label="Interactive assembly. Use the labeled parts and view controls below for keyboard access."
     >
+      <ContextLossHandler onError={props.onError}/>
       <ambientLight intensity={1.1} />
       <hemisphereLight args={["#fff6df", "#b7c0ad", 1.5]} />
       <directionalLight castShadow position={[3, 6, 4]} intensity={3.2} shadow-mapSize={[1024, 1024]} />
       <directionalLight position={[-4, 2, -3]} intensity={2} color="#eef5ed" />
-      <Bounds fit clip observe margin={1.45}>
-        <group key={props.resetKey}>{props.assembly ? <ReviewedModel {...props} /> : <Preview {...props} />}</group>
+      <Bounds fit clip observe margin={1.45} maxDuration={reducedMotion ? 0 : 0.3}>
+        <FocusableAssembly key={props.resetKey} {...props}/>
       </Bounds>
       <ContactShadows position={[0, -2.2, 0]} opacity={0.25} scale={12} blur={2.8} far={5} resolution={256} />
-      <OrbitControls key={`orbit-${props.resetKey}`} makeDefault minDistance={2.5} maxDistance={15} enablePan={false} maxPolarAngle={Math.PI * 0.85} />
+      <OrbitControls key={`orbit-${props.resetKey}`} makeDefault minDistance={0.25} maxDistance={15} enablePan={false} enableDamping={!reducedMotion} maxPolarAngle={Math.PI * 0.85} />
     </Canvas>
   );
 }

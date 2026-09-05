@@ -1,11 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { Group, Mesh } from "three";
+import { BoxGeometry, Group, Mesh } from "three";
 import type { AssemblyPart } from "@/lib/domain";
 import { STARTER_GUIDES } from "@/lib/catalog";
 import { PREVIEW_PARTS } from "./parts";
-import { applyExplode, capturePositions, explodedPosition, resolvePartNodes, validateSelfContainedGlb } from "./model-utils";
+import { applyExplode, capturePositions, combinedPartBounds, explodedPosition, resolvePartNodes, restoreSourceNodeNames, validateSelfContainedGlb } from "./model-utils";
 
 const part: AssemblyPart = { id: "screws", label: "Screws", description: "Two fixing meshes", nodeNames: ["screw"], explodeOffset: [1, 2, -3] };
+
+describe("automatic step camera targets", () => {
+  it("combines every active part in world space after parent transforms", () => {
+    const root = new Group();
+    root.position.set(10, 2, 0);
+    root.scale.setScalar(2);
+    const first = new Mesh(new BoxGeometry(1, 1, 1));
+    const second = new Mesh(new BoxGeometry(1, 1, 1));
+    first.userData.viewerPartId = "first";
+    second.userData.viewerPartId = "second";
+    second.position.x = 3;
+    root.add(first, second);
+    const box = combinedPartBounds(root, ["first", "second"]);
+    expect(box.min.toArray()).toEqual([9, 1, -1]);
+    expect(box.max.toArray()).toEqual([17, 3, 1]);
+    expect(combinedPartBounds(root, ["first"]).max.x).toBe(11);
+    first.geometry.dispose(); second.geometry.dispose();
+  });
+  it("rejects missing and empty targets instead of silently focusing the entire object", () => {
+    const root = new Group();
+    const mesh = new Mesh(new BoxGeometry(1, 1, 1));
+    mesh.userData.viewerPartId = "known";
+    root.add(mesh);
+    expect(() => combinedPartBounds(root, ["known", "missing"])).toThrow("no usable 3D bounds");
+    expect(() => combinedPartBounds(root, [])).toThrow("No model targets");
+    mesh.geometry.dispose();
+  });
+});
 
 function makeGlb(metadata: unknown) {
   const json = new TextEncoder().encode(JSON.stringify(metadata));
@@ -23,6 +51,19 @@ function makeGlb(metadata: unknown) {
 }
 
 describe("reviewed part mapping", () => {
+  it("restores source names sanitized or deduplicated by GLTFLoader", () => {
+    const root = new Group();
+    const first = new Mesh();
+    const second = new Mesh();
+    first.name = "screw_head";
+    second.name = "screw_head_1";
+    root.add(first, second);
+    const indices = new Map([[first, 0], [second, 1]]);
+    restoreSourceNodeNames(root, (node) => indices.get(node as Mesh), [{ name: "screw head" }, { name: "screw head" }]);
+    const result = resolvePartNodes(root, [{ ...part, nodeNames: ["screw head"] }]);
+    expect(result.get("screws")).toEqual([first, second]);
+  });
+
   it("matches every mesh sharing a reviewed node name", () => {
     const root = new Group();
     const first = new Mesh();
@@ -33,11 +74,11 @@ describe("reviewed part mapping", () => {
   });
 
   it("validates every node mapping rather than accepting a partial match", () => {
-    const root = new Group();
+    const root = new Mesh();
     root.name = "screw";
     expect(() => resolvePartNodes(root, [{ ...part, nodeNames: ["screw", "missing"] }])).toThrow("missing");
     expect(() => resolvePartNodes(root, [part, part])).toThrow("unique");
-    expect(() => resolvePartNodes(root, [])).toThrow("no reviewed part labels");
+    expect(() => resolvePartNodes(root, [])).toThrow("no part labels");
   });
 
   it("does not apply an offset twice when both a group and its child are mapped", () => {
@@ -56,6 +97,12 @@ describe("reviewed part mapping", () => {
     mesh.name = "screw";
     root.add(mesh);
     expect(() => resolvePartNodes(root, [part, { ...part, id: "other", nodeNames: ["fixings"] }])).toThrow("overlap");
+  });
+
+  it("rejects labels that point to empty groups", () => {
+    const root = new Group();
+    root.name = "screw";
+    expect(() => resolvePartNodes(root, [part])).toThrow("no displayable meshes");
   });
 });
 

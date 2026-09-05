@@ -1,0 +1,8 @@
+.pipeline { list-style: none; padding: 0; margin: 25px 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pipeline li { position: relative; padding: 20px; background: #fffefa; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.number { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #eef0e8; margin-bottom: 14px; font-size: 11px; }
+.pipeline li[data-ready="true"] .number { background: #244b3a; color: white; }
+.pipeline h3 { font-size: 16px; margin-bottom: 9px; }
+.pipeline strong { display: block; font-size: 11px; font-weight: 600; color: #647452; }
+.pipeline p { font-size: 11px; margin: 8px 0 0; }
+@media (max-width: 600px) { .pipeline { grid-template-columns: minmax(0, 1fr); } .pipeline li { padding: 16px; } }

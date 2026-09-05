@@ -1,6 +1,12 @@
 import type { AssemblyKind, AssemblyPart } from "@/lib/domain";
 
 export const PREVIEW_PARTS: Record<AssemblyKind, AssemblyPart[]> = {
+  door: [
+    { id: "door-frame", label: "Door frame", description: "The stationary surround: two upright sides and a top rail. This illustration does not show the wall or hidden fixings.", nodeNames: ["door-frame"], explodeOffset: [-1.2, 0, -0.35] },
+    { id: "door-panel", label: "Door panel", description: "The broad wooden piece that moves. The recessed rectangles are decorative panels, not removable covers.", nodeNames: ["door-panel"], explodeOffset: [0.45, 0, 0.8] },
+    { id: "door-hinges", label: "Hinges", description: "Three illustrated brass pivots along the left edge connect the door to its frame. Never loosen hardware supporting a door.", nodeNames: ["door-hinges"], explodeOffset: [-0.55, 0, 1.1] },
+    { id: "door-handle", label: "Handle", description: "The visible brass lever on the opposite edge. Its hidden latch and internal mechanism are not modeled and cannot be inferred.", nodeNames: ["door-handle"], explodeOffset: [1.25, 0, 1.15] },
+  ],
   hinge: [
     { id: "hinge-frame", label: "Frame leaf", description: "The plate attached to the frame. Generic illustration only.", nodeNames: ["hinge-frame"], explodeOffset: [-1.15, 0, 0] },
     { id: "hinge-door", label: "Door leaf", description: "The plate attached to the door. Shape and fixings vary.", nodeNames: ["hinge-door"], explodeOffset: [1.15, 0, 0] },

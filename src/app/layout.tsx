@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "Handyman — A little help. A better home.", template: "%s | Handyman" },
-  description: "Make sense of small home repairs with clear, cautious guidance and interactive parts. Start with a description, photo, or voice note.",
+  description: "Explore small home repairs with clear guidance and interactive parts. The connected visual workflow starts with a photo and written description.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
