@@ -1,0 +1,121 @@
+import { mutation, query } from "./_generated/server";
+import { v, ConvexError } from "convex/values";
+import { internal } from "./_generated/api";
+import { bounded, cancelProblemJobs, identity, ownProblem, quota } from "./lib";
+
+export const create = mutation({
+  args: { text: v.string(), consent: v.boolean() },
+  handler: async (ctx, args) => {
+    const user = await identity(ctx);
+    await quota(ctx, `problem:${user.subject}`, 20);
+    return await ctx.db.insert("problems", {
+      owner: user.subject, text: bounded(args.text, 4000, "Description"), consent: args.consent,
+      transcript: "", transcriptConfirmed: false, revision: 1, state: "draft", updatedAt: Date.now(),
+    });
+  },
+});
+export const list = query({
+  args: {},
+  handler: async ctx => {
+    const user = await identity(ctx);
+    return await ctx.db.query("problems").withIndex("by_owner", q => q.eq("owner", user.subject)).order("desc").take(100);
+  },
+});
+export const get = query({
+  args: { problemId: v.id("problems") },
+  handler: async (ctx, { problemId }) => {
+    const problem = await ownProblem(ctx, problemId);
+    const media = await ctx.db.query("media").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    const analyses = await ctx.db.query("analyses").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    const analysis = analyses.find(a => a.revision === problem.revision) ?? null;
+    const feedback = await ctx.db.query("feedback").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    return {
+      problem,
+      media: media.map(m => ({ _id: m._id, kind: m.kind, state: m.state, mime: m.mime, bytes: m.bytes, durationSeconds: m.durationSeconds })),
+      analysis, feedback,
+    };
+  },
+});
+export const update = mutation({
+  args: { problemId: v.id("problems"), text: v.string(), transcript: v.optional(v.string()), transcriptConfirmed: v.boolean() },
+  handler: async (ctx, args) => {
+    const problem = await ownProblem(ctx, args.problemId);
+    const transcript = args.transcript === undefined ? problem.transcript : bounded(args.transcript, 8000, "Transcript");
+    await cancelProblemJobs(ctx, problem._id);
+    await ctx.db.patch(problem._id, {
+      text: bounded(args.text, 4000, "Description"), transcript,
+      transcriptConfirmed: args.transcriptConfirmed && transcript.length > 0,
+      revision: problem.revision + 1, state: "draft", activeJobId: undefined,
+      failure: undefined, updatedAt: Date.now(),
+    });
+  },
+});
+export const setConsent = mutation({
+  args: { problemId: v.id("problems"), consent: v.boolean() },
+  handler: async (ctx, args) => {
+    const problem = await ownProblem(ctx, args.problemId);
+    await cancelProblemJobs(ctx, problem._id);
+    await ctx.db.patch(problem._id, { consent: args.consent, revision: problem.revision + 1, state: "draft", activeJobId: undefined });
+  },
+});
+export const analyze = mutation({
+  args: { problemId: v.id("problems") },
+  handler: async (ctx, { problemId }) => {
+    const problem = await ownProblem(ctx, problemId);
+    if (!problem.consent) throw new ConvexError("Consent to AI processing is required.");
+    if (problem.state === "analyzing" && problem.activeJobId) return problem.activeJobId;
+    const media = await ctx.db.query("media").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    if (media.some(m => m.state === "reserved")) throw new ConvexError("Finish or remove pending uploads first.");
+    if (media.some(m => m.kind === "audio") && !problem.transcriptConfirmed) throw new ConvexError("Review and confirm the transcript before analysis.");
+    if (!problem.text && !problem.transcript && !media.some(m => m.kind === "photo")) throw new ConvexError("Add a description, photo, or confirmed transcript.");
+    await quota(ctx, `analysis:${problem.owner}`, 10);
+    await cancelProblemJobs(ctx, problemId);
+    const jobId = await ctx.db.insert("jobs", {
+      owner: problem.owner, kind: "analysis", problemId, revision: problem.revision, state: "queued",
+      attempts: 0, deadline: Date.now() + 180_000,
+    });
+    await ctx.db.patch(problemId, { activeJobId: jobId, state: "analyzing", failure: undefined, updatedAt: Date.now() });
+    await ctx.scheduler.runAfter(0, internal.ai.analyze, { jobId });
+    await ctx.scheduler.runAfter(180_000, internal.jobs.expire, { jobId });
+    return jobId;
+  },
+});
+export const transcribe = mutation({
+  args: { problemId: v.id("problems") },
+  handler: async (ctx, { problemId }) => {
+    const problem = await ownProblem(ctx, problemId);
+    if (!problem.consent) throw new ConvexError("Consent to AI processing is required.");
+    if (problem.state === "transcribing" && problem.activeJobId) return problem.activeJobId;
+    const audio = await ctx.db.query("media").withIndex("by_problem", q => q.eq("problemId", problemId))
+      .filter(q => q.and(q.eq(q.field("kind"), "audio"), q.eq(q.field("state"), "ready"))).first();
+    if (!audio) throw new ConvexError("Upload an audio clip first.");
+    await quota(ctx, `transcription:${problem.owner}`, 10);
+    await cancelProblemJobs(ctx, problemId);
+    const jobId = await ctx.db.insert("jobs", {
+      owner: problem.owner, kind: "transcription", problemId, revision: problem.revision,
+      state: "queued", attempts: 0, deadline: Date.now() + 180_000,
+    });
+    await ctx.db.patch(problemId, { activeJobId: jobId, state: "transcribing", failure: undefined, updatedAt: Date.now() });
+    await ctx.scheduler.runAfter(0, internal.ai.transcribe, { jobId });
+    await ctx.scheduler.runAfter(180_000, internal.jobs.expire, { jobId });
+    return jobId;
+  },
+});
+export const remove = mutation({
+  args: { problemId: v.id("problems") },
+  handler: async (ctx, { problemId }) => {
+    await ownProblem(ctx, problemId);
+    const media = await ctx.db.query("media").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    for (const item of media) {
+      if (item.storageId) await ctx.storage.delete(item.storageId);
+      await ctx.db.delete(item._id);
+    }
+    const analyses = await ctx.db.query("analyses").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    for (const item of analyses) await ctx.db.delete(item._id);
+    const feedback = await ctx.db.query("feedback").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    for (const item of feedback) await ctx.db.delete(item._id);
+    const jobs = await ctx.db.query("jobs").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
+    for (const item of jobs) await ctx.db.delete(item._id);
+    await ctx.db.delete(problemId);
+  },
+});
