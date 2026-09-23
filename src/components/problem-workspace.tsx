@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState, type ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowUpRight, ShieldAlert, Trash2 } from "lucide-react";
@@ -11,7 +11,8 @@ import { stateLabels } from "./problem-history";
 import AuthGate from "./auth-gate";
 import Feedback from "./repair/feedback";
 import PrivateAttachment from "./private-attachment";
-import { isConnected } from "@/lib/config";
+import { isConnected, visualRepairEnabled } from "@/lib/config";
+import { repairLog } from "@/lib/repair-log";
 import { TemporaryWorkspace } from "./temporary-repairs";
 import RepairScene from "./repair/repair-scene";
 import VisualTutorial from "./repair/visual-tutorial";
@@ -32,6 +33,15 @@ function Workspace({ problemId }: { problemId: Id<"problems"> }) {
   const [deleting,setDeleting] = useState(false);
   const [confirmDelete,setConfirmDelete] = useState(false);
   const router = useRouter();
+  const workflow = data?.problem.workflow ?? "legacy";
+  const state = data?.problem.state;
+  const unavailable = data === null;
+  useEffect(() => {
+    repairLog("workspace.state", {
+      problemId, workflow, phase: state ?? (unavailable ? "unavailable" : "loading"),
+      enabled: visualRepairEnabled,
+    });
+  }, [problemId, workflow, state, unavailable]);
   if (data === undefined) return <div role="status"><div className="loading-skeleton"/><p>Opening your private repair…</p></div>;
   if (data === null) return <div className="empty-state"><h1>This repair isn&apos;t available.</h1><p>It may have been deleted or saved in a different browser session. Your other private repairs are still available in My repairs.</p><Link href="/problems" className="button">Back to My repairs</Link></div>;
   const { problem, media, analysis, feedback } = data;
@@ -40,6 +50,7 @@ function Workspace({ problemId }: { problemId: Id<"problems"> }) {
   return <><Link className="breadcrumbs" href="/problems"><ArrowLeft size={15}/>Back to My repairs</Link><div className="section-heading"><div className="page-heading" style={{marginBottom:0}}><span className="eyebrow">YOUR REPAIR WORKSPACE</span><h1>One small step forward.</h1><span className="status-badge">{stateLabels[problem.state]}</span></div><button className="button button-secondary button-small" onClick={() => setConfirmDelete(!confirmDelete)} disabled={deleting}><Trash2 size={15}/>Delete repair</button></div>
     {confirmDelete && <div className="notice"><div><strong>Delete this repair and its stored media?</strong><p>This removes the application record, analysis, and feedback. Provider retention follows provider policies. This cannot be undone.</p><div className="form-actions" style={{marginTop:13}}><button className="button button-danger button-small" disabled={deleting} onClick={async () => {setDeleting(true);setError("");try{await remove({problemId});router.replace("/problems");}catch(e){setError(messageFromError(e));setDeleting(false);}}}>{deleting?"Deleting…":"Delete permanently"}</button><button className="button button-secondary button-small" disabled={deleting} onClick={() => setConfirmDelete(false)}>Keep this repair</button></div></div></div>}
     {error && <div className="notice notice-error" role="alert">{error}</div>}
+    <div className="notice"><div><strong>This repair uses the previous analysis workflow.</strong><p>Automatic photo-to-3D preparation was not started for this repair. Publishing the website does not convert saved repairs.</p><Link href="/problems/new" className="text-link">Start a new photo + prompt visual repair</Link></div></div>
     {processing && <div className="notice notice-sage" role="status"><div><strong>{problem.state==="transcribing" ? "Turning your voice note into words…" : "Looking for an appropriate next step…"}</strong><p>You can leave this page and come back. Progress is saved, and results update here automatically. A suggestion is not a confirmed diagnosis.</p></div></div>}
     {problem.failure && <div className="notice notice-error" role="alert"><div><strong>We couldn&apos;t complete this step.</strong><p>{problem.failure}</p><p>Your input is saved. Review it below and retry when the service is available.</p></div></div>}
     <section className="workspace-section"><h2>What you shared</h2><p>{problem.text || "No written description — your attachment provides the starting point."}</p>{media.length > 0 && <div className="history-list">{media.map(item => <div key={item._id} className="history-card" style={{padding:13}}><PrivateAttachment media={item}/><button className="icon-button" disabled={processing || deleting} aria-label={`Remove ${item.kind}`} onClick={async () => {try{await removeMedia({mediaId:item._id});}catch(e){setError(messageFromError(e));}}}><Trash2 size={15}/></button></div>)}</div>}</section>

@@ -17,6 +17,6 @@ createRoot(root).render(<React.StrictMode>
       ? <div className="container page-section"><IntakeForm workflow="visual" onSubmit={async data => {
           recordCall("visual-intake", { text: data.text, photos: data.photos.length, consent: data.consent });
         }}/></div>
-      : <VisualRepairWorkspace problemId={"visual-fixture" as Id<"problems">}/>}
+      : <div className="container page-section"><VisualRepairWorkspace problemId={"visual-fixture" as Id<"problems">}/></div>}
   </main>
 </React.StrictMode>);

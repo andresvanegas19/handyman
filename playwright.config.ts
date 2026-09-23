@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/visual-repair/**",
   fullyParallel: true,
   workers: 2,
   forbidOnly: Boolean(process.env.CI),

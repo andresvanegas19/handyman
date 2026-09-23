@@ -1,6 +1,6 @@
 export type Outcome = "worked" | "partly" | "not_worked";
-export type Category = "Doors & windows" | "Furniture" | "Plumbing";
-export type AssemblyKind = "door" | "hinge" | "knob" | "aerator";
+export type Category = "Doors & windows" | "Furniture" | "Plumbing" | "Appliances";
+export type AssemblyKind = "door" | "hinge" | "knob" | "aerator" | "washer-control" | "thermostat";
 
 export interface GuideStep {
   title: string;

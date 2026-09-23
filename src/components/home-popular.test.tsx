@@ -44,11 +44,11 @@ describe("examples alongside the connected catalog", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, []])("lists all six catalog examples when published guides are %j", (guides) => {
+  it.each([undefined, []])("lists all catalog examples when published guides are %j", (guides) => {
     query.mockReturnValue(guides);
     render(<CatalogBrowser/>);
     const examples = screen.getByRole("region", { name: "Explore draft examples" });
     expect(examples).toHaveAttribute("id", "examples");
-    expect(within(examples).getAllByRole("link")).toHaveLength(6);
+    expect(within(examples).getAllByRole("link")).toHaveLength(STARTER_GUIDES.length);
   });
 });

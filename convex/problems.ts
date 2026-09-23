@@ -5,15 +5,26 @@ import { aiQuota, bounded, cancelProblemJobs, identity, ownProblem, quota } from
 import { removeRepairs } from "./repairLifecycle";
 
 export const create = mutation({
-  args: { text: v.string(), consent: v.boolean(), workflow: v.optional(v.literal("visual")) },
+  args: { text: v.string(), consent: v.boolean(), workflow: v.optional(v.literal("visual")), clientRequestId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const user = await identity(ctx);
     if (args.workflow === "visual" && (process.env.VISUAL_REPAIR_ENABLED !== "true" || !args.text.trim() || !args.consent)) {
       throw new ConvexError("Visual repair requires enabled service, a written description, and provider consent.");
     }
+    const text = bounded(args.text, 4000, "Description");
+    if (args.clientRequestId !== undefined) {
+      if (!/^[A-Za-z0-9_-]{16,100}$/.test(args.clientRequestId)) throw new ConvexError("Invalid client request ID.");
+      const previous = await ctx.db.query("problems").withIndex("by_owner_request", q => q.eq("owner", user.subject).eq("clientRequestId", args.clientRequestId)).unique();
+      if (previous) {
+        if (previous.text !== text || previous.consent !== args.consent || previous.workflow !== args.workflow) {
+          throw new ConvexError("This request ID already belongs to different inputs. Open the existing repair or begin a new request.");
+        }
+        return previous._id;
+      }
+    }
     await quota(ctx, `problem:${user.subject}`, 20);
     return await ctx.db.insert("problems", {
-      owner: user.subject, text: bounded(args.text, 4000, "Description"), consent: args.consent,
+      owner: user.subject, text, consent: args.consent, clientRequestId: args.clientRequestId,
       ...(args.workflow ? { workflow: args.workflow } : {}),
       transcript: "", transcriptConfirmed: false, revision: 1, state: "draft", updatedAt: Date.now(),
     });
@@ -23,7 +34,13 @@ export const list = query({
   args: {},
   handler: async ctx => {
     const user = await identity(ctx);
-    return await ctx.db.query("problems").withIndex("by_owner", q => q.eq("owner", user.subject)).order("desc").take(100);
+    const problems = await ctx.db.query("problems").withIndex("by_owner", q => q.eq("owner", user.subject)).order("desc").take(100);
+    return await Promise.all(problems.map(async problem => {
+      const run = problem.workflow === "visual" && problem.activeRepairRunId ? await ctx.db.get(problem.activeRepairRunId) : null;
+      const visualPhase = !run ? undefined :
+        run.owner === user.subject && run.revision === problem.revision && problem.consent ? run.phase : "cancelled" as const;
+      return { ...problem, visualPhase };
+    }));
   },
 });
 export const get = query({

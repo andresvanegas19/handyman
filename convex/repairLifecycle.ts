@@ -1,12 +1,13 @@
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { ACTIVE_PHASES } from "./repairContracts";
+import { repairLog } from "../src/lib/repair-log";
 
-export async function invalidateRepairs(ctx: MutationCtx, problemId: Id<"problems">) {
+export async function invalidateRepairs(ctx: MutationCtx, problemId: Id<"problems">, message = "Inputs or consent changed.") {
   const runs = await ctx.db.query("repairRuns").withIndex("by_problem", q => q.eq("problemId", problemId)).collect();
   for (const run of runs) {
-    if (ACTIVE_PHASES.includes(run.phase) || run.phase === "ready") {
-      await ctx.db.patch(run._id, { phase: "cancelled", retryable: false, message: "Inputs or consent changed.", updatedAt: Date.now() });
+    if (run.phase !== "cancelled") {
+      await ctx.db.patch(run._id, { phase: "cancelled", retryable: false, message, updatedAt: Date.now() });
+      repairLog("run.cancelled", { problemId, runId: run._id, phase: run.phase }, "warn");
     }
     const stages = await ctx.db.query("repairStages").withIndex("by_run", q => q.eq("runId", run._id)).collect();
     for (const stage of stages) if (["queued", "running"].includes(stage.state)) await ctx.db.patch(stage._id, { state: "cancelled" });

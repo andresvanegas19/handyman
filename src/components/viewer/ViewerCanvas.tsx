@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Bounds, ContactShadows, Html, OrbitControls, useBounds } from "@react-three/drei";
-import { Box3, Color, Group, LoadingManager, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, Texture, Vector3 } from "three";
+import { Box3, CatmullRomCurve3, Color, Group, LoadingManager, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, Texture, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AssemblyKind, AssemblyPart, ReviewedAssembly } from "@/lib/domain";
 import type { PrivateMappedScene } from "@/lib/visual-repair";
@@ -326,6 +326,75 @@ function Knob(props: ViewerCanvasProps) {
   </group>;
 }
 
+function WasherControl(props: ViewerCanvasProps) {
+  return <group rotation={[0, -0.3, 0]}>
+    <PreviewPart {...props} id="washer-panel" base={[0, 0, -0.2]} color="#343832">
+      <mesh castShadow receiveShadow><boxGeometry args={[3.3, 2.7, 0.12]}/><meshStandardMaterial roughness={0.85}/></mesh>
+    </PreviewPart>
+    <PreviewPart {...props} id="washer-dial" color="#a8b1a4">
+      <mesh castShadow><ringGeometry args={[0.24, 1.05, 64]}/><meshStandardMaterial side={2} roughness={0.4}/></mesh>
+      <mesh><torusGeometry args={[1.05, 0.025, 12, 64]}/><Metal/></mesh>
+      {Array.from({ length: 12 }, (_, index) => {
+        const angle = index * Math.PI * 2 / 12;
+        return <mesh key={index} position={[Math.sin(angle) * 0.91, Math.cos(angle) * 0.91, 0.015]} rotation={[0, 0, -angle]}>
+          <boxGeometry args={[0.025, 0.1, 0.018]}/><Metal/>
+        </mesh>;
+      })}
+    </PreviewPart>
+    <PreviewPart {...props} id="washer-shaft" base={[0, 0, 0.16]} color={steel}>
+      <mesh castShadow rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.09, 0.09, 0.4, 24]}/><Metal/></mesh>
+    </PreviewPart>
+    <PreviewPart {...props} id="washer-knob" base={[0, 0, 0.65]} color="#353c36">
+      <mesh castShadow rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.65, 0.65, 0.3, 64, 1, true]}/><meshStandardMaterial side={2} roughness={0.7}/></mesh>
+      <mesh castShadow position={[0, 0, 0.15]}><circleGeometry args={[0.65, 64]}/><meshStandardMaterial side={2} roughness={0.7}/></mesh>
+      <mesh position={[0, 0, -0.15]}><torusGeometry args={[0.65, 0.025, 12, 64]}/><meshStandardMaterial roughness={0.7}/></mesh>
+      {Array.from({ length: 24 }, (_, index) => {
+        const angle = index * Math.PI * 2 / 24;
+        return <mesh key={index} castShadow position={[Math.sin(angle) * 0.65, Math.cos(angle) * 0.65, 0]} rotation={[0, 0, -angle]}>
+          <boxGeometry args={[0.025, 0.035, 0.26]}/><meshStandardMaterial roughness={0.8}/>
+        </mesh>;
+      })}
+    </PreviewPart>
+  </group>;
+}
+
+function ThermostatWire({ index }: { index: number }) {
+  const curve = useMemo(() => {
+    const angle = index * Math.PI * 2 / 5 + 0.35;
+    return new CatmullRomCurve3([
+      new Vector3((index - 2) * 0.06, -0.1, 0),
+      new Vector3((index - 2) * 0.05, 0.08, 0.25),
+      new Vector3(Math.cos(angle) * 0.45, Math.sin(angle) * 0.55, 0.45),
+      new Vector3(Math.cos(angle) * 0.75, Math.sin(angle) * 1.12, 0.5),
+    ]);
+  }, [index]);
+  return <mesh castShadow><tubeGeometry args={[curve, 24, 0.027, 8, false]}/><meshStandardMaterial roughness={0.7}/></mesh>;
+}
+
+function Thermostat(props: ViewerCanvasProps) {
+  return <group rotation={[0, -0.2, 0]}>
+    <PreviewPart {...props} id="thermostat-trim" base={[0, 0, -0.22]} color="#ded9ca">
+      <mesh castShadow receiveShadow><boxGeometry args={[2.65, 2.8, 0.12]}/><meshStandardMaterial roughness={0.8}/></mesh>
+      <mesh position={[0, 0, 0.065]}><circleGeometry args={[0.33, 32]}/><meshBasicMaterial color="#303830"/></mesh>
+    </PreviewPart>
+    <PreviewPart {...props} id="thermostat-base" color="#ebe8dc">
+      <mesh castShadow><ringGeometry args={[0.32, 1.08, 64]}/><meshStandardMaterial side={2} roughness={0.7}/></mesh>
+      <mesh castShadow><torusGeometry args={[1.04, 0.045, 12, 64]}/><meshStandardMaterial roughness={0.7}/></mesh>
+    </PreviewPart>
+    <PreviewPart {...props} id="thermostat-terminals" base={[0, 0, 0.08]} color="#505b58">
+      {[-1, 1].flatMap(side => [-0.48, -0.16, 0.16, 0.48].map(y => <mesh key={`${side}-${y}`} position={[side * Math.sqrt(0.8 ** 2 - y ** 2), y, 0]} rotation={[0, 0, side * y * 0.6]} castShadow>
+        <boxGeometry args={[0.24, 0.25, 0.12]}/><meshStandardMaterial roughness={0.7}/>
+      </mesh>))}
+    </PreviewPart>
+    <PreviewPart {...props} id="thermostat-wires" base={[0, 0, 0.12]} color="#8b938d">
+      {Array.from({ length: 5 }, (_, index) => <ThermostatWire key={index} index={index}/>)}
+    </PreviewPart>
+    <PreviewPart {...props} id="thermostat-screws" color={steel}>
+      {[-0.87, 0.87].map(y => <Screw key={y} position={[0, y, 0.13]}/>)}
+    </PreviewPart>
+  </group>;
+}
+
 function Aerator(props: ViewerCanvasProps) {
   return <group rotation={[0.2, 0, 0.12]}>
     <PreviewPart {...props} id="aerator-housing" base={[0, -0.38, 0]} color={steel}>
@@ -354,7 +423,7 @@ function Preview(props: ViewerCanvasProps) {
   const { onReady, exploded } = props;
   useEffect(() => { onReady(); }, [onReady]);
   useEffect(() => { bounds.refresh().clip().fit(); }, [bounds, exploded]);
-  return props.kind === "door" ? <Door {...props} /> : props.kind === "knob" ? <Knob {...props} /> : props.kind === "aerator" ? <Aerator {...props} /> : <Hinge {...props} />;
+  return props.kind === "door" ? <Door {...props} /> : props.kind === "thermostat" ? <Thermostat {...props}/> : props.kind === "washer-control" ? <WasherControl {...props}/> : props.kind === "knob" ? <Knob {...props} /> : props.kind === "aerator" ? <Aerator {...props} /> : <Hinge {...props} />;
 }
 
 function FocusableAssembly(props: ViewerCanvasProps) {
@@ -370,7 +439,7 @@ function FocusableAssembly(props: ViewerCanvasProps) {
   return <group ref={root}>{props.assembly || props.privateScene ? <ReviewedModel {...props}/> : <Preview {...props}/>}</group>;
 }
 
-function ContextLossHandler({ onError }: Pick<ViewerCanvasProps, "onError">) {
+export function ContextLossHandler({ onError }: Pick<ViewerCanvasProps, "onError">) {
   const gl = useThree(state => state.gl);
   useEffect(() => {
     const canvas = gl.domElement;
@@ -384,15 +453,29 @@ function ContextLossHandler({ onError }: Pick<ViewerCanvasProps, "onError">) {
   return null;
 }
 
-function Unavailable({ onError }: Pick<ViewerCanvasProps, "onError">) {
-  useEffect(() => { onError("WebGL is unavailable in this browser. Instructions remain locked. Enable 3D graphics or try another browser."); }, [onError]);
-  return null;
+export function useWebGLAvailable(onError: (message: string) => void) {
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    const probe = document.createElement("canvas");
+    let context: WebGL2RenderingContext | null = null;
+    try { context = probe.getContext("webgl2"); }
+    catch { /* Report an unavailable graphics context below, without unlocking instructions. */ }
+    if (!context) {
+      onError("WebGL is unavailable in this browser. Instructions remain locked. Enable 3D graphics or try another browser.");
+      return;
+    }
+    context.getExtension("WEBGL_lose_context")?.loseContext();
+    setAvailable(true);
+  }, [onError]);
+  return available;
 }
 
 export function PrivateMappedCanvas({ scene, activePartIds, focusIds, focusKey, onError, onReady }: {
   scene: PrivateMappedScene; activePartIds: string[]; focusIds: string[]; focusKey: number;
   onError: (message: string) => void; onReady: () => void;
 }) {
+  const available = useWebGLAvailable(onError);
+  if (!available) return null;
   return <ViewerCanvas kind="hinge" privateScene={scene} parts={scene.parts} activePartIds={activePartIds} focusIds={focusIds} focusKey={focusKey} focusId={null} resetKey={0} selectedId={null} hiddenIds={[]} isolateId={null} exploded={false} onPartSelect={() => {}} onError={onError} onReady={onReady}/>;
 }
 
@@ -404,7 +487,7 @@ export default function ViewerCanvas(props: ViewerCanvasProps) {
       dpr={[1, 1.7]}
       camera={{ position: [4.6, 3.3, 6.8], fov: 38 }}
       gl={{ antialias: true, alpha: true }}
-      fallback={props.privateScene ? <Unavailable onError={props.onError}/> : <span>3D is not supported. Use the labeled parts list.</span>}
+      fallback={<span>{props.privateScene ? "WebGL is unavailable. Instructions remain locked." : "3D is not supported. Use the labeled parts list."}</span>}
       aria-label="Interactive assembly. Use the labeled parts and view controls below for keyboard access."
     >
       <ContextLossHandler onError={props.onError}/>

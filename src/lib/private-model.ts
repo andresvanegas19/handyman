@@ -1,11 +1,14 @@
 import { privateFileUrl } from "./private-file";
 import { MAX_GLB_BYTES, validateSelfContainedGlb } from "@/components/viewer/model-utils";
+import { repairLog } from "./repair-log";
 
 export async function fetchPrivateRepairModel(sceneId: string, token: string, signal: AbortSignal): Promise<Blob> {
+  repairLog("model.download.started", { sceneId });
   const response = await fetch(privateFileUrl("/repair-scene", sceneId), {
     headers: { Authorization: `Bearer ${token}` }, signal, cache: "no-store",
     credentials: "omit", referrerPolicy: "no-referrer",
   });
+  repairLog("model.download.response", { sceneId, httpStatus: response.status }, response.ok ? "info" : "error");
   if (!response.ok) throw new Error(response.status === 401 || response.status === 403
     ? "Your private model authorization expired. Reconnect your browser session and retry."
     : "The private model is unavailable. Retry when your connection and repair are available.");
@@ -30,6 +33,8 @@ export async function fetchPrivateRepairModel(sceneId: string, token: string, si
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   signal.throwIfAborted();
+  repairLog("model.validation.started", { sceneId, bytes: size });
   validateSelfContainedGlb(bytes.buffer);
+  repairLog("model.download.completed", { sceneId, bytes: size });
   return new Blob([bytes], { type: "model/gltf-binary" });
 }

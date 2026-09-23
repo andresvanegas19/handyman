@@ -1,0 +1,60 @@
+.portrait {
+  position: relative;
+  aspect-ratio: 620 / 583;
+  padding-bottom: 42px;
+}
+
+.stage {
+  position: absolute;
+  inset: 0 0 42px;
+  display: grid;
+  place-items: center;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.image {
+  display: block;
+  object-fit: contain;
+}
+
+.controls,
+.error {
+  position: absolute;
+  bottom: 6px;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.controls button,
+.error button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--green);
+}
+
+.error {
+  padding-inline: 12px;
+  font-size: 9px;
+}
+
+.error button {
+  border-radius: 8px;
+  flex-shrink: 0;
+}

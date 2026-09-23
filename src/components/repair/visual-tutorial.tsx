@@ -14,11 +14,11 @@ const PartsViewer = dynamic(() => import("../viewer/PartsViewer"), {
   loading: () => <p role="status">Loading interactive parts...</p>,
 });
 
-export default function VisualTutorial(props: { guide: Guide; assembly?: ReviewedAssembly; evidence?: ReactNode }) {
+export default function VisualTutorial(props: { guide: Guide; assembly?: ReviewedAssembly; evidence?: ReactNode; children?: ReactNode; fullWidth?: boolean }) {
   return <Tutorial key={`${props.guide.slug}:${props.guide.version}:${props.assembly?.url ?? "preview"}`} {...props}/>;
 }
 
-function Tutorial({ guide, assembly, evidence }: { guide: Guide; assembly?: ReviewedAssembly; evidence?: ReactNode }) {
+function Tutorial({ guide, assembly, evidence, children, fullWidth = false }: { guide: Guide; assembly?: ReviewedAssembly; evidence?: ReactNode; children?: ReactNode; fullWidth?: boolean }) {
   const hasDoorContext = guide.assemblyKind === "hinge" && guide.status === "draft" && !assembly;
   const [wholeDoor, setWholeDoor] = useState(hasDoorContext);
   const [stepIndex, setStepIndex] = useState(0);
@@ -26,7 +26,9 @@ function Tutorial({ guide, assembly, evidence }: { guide: Guide; assembly?: Revi
   const [understood, setUnderstood] = useState(false);
   const [paused, setPaused] = useState(false);
   const [completed, setCompleted] = useState<number[]>([]);
+  const [stepsVisible, setStepsVisible] = useState(true);
   const headingId = useId();
+  const stepsId = useId();
   const step = guide.steps[stepIndex];
   const parts = assembly?.parts ?? (guide.status === "draft" && guide.assemblyKind ? PREVIEW_PARTS[guide.assemblyKind] : []);
   const targets = parts.filter(part => step?.partIds.includes(part.id));
@@ -43,21 +45,11 @@ function Tutorial({ guide, assembly, evidence }: { guide: Guide; assembly?: Revi
     setWholeDoor(false);
   }
 
-  if (!step) return <div className="notice" role="alert">This guide has no visual checkpoints. Do not infer a repair plan from its model.</div>;
+  if (!step) return <><div className="notice" role="alert">This guide has no visual checkpoints. Do not infer a repair plan from its model.</div>{children}</>;
 
-  return <section className={styles.tutorial} aria-labelledby={headingId}>
-    <div className={styles.intro}>
-      <span className="eyebrow">IDENTIFY FIRST. ACT ONLY WITH VERIFIED GUIDANCE.</span>
-      <h2 id={headingId}>One step at a time</h2>
-      <p>Compare visible shapes with your object. Separate the model, select a part, and inspect it alone. A matching-looking model is not a diagnosis.</p>
-      <p className={styles.reference}>{assembly?.reviewed ? "Reviewed reference model, not a reconstruction of your photo." : guide.status === "draft" ? "Draft visual exploration, not an approved repair tutorial." : "No reviewed 3D model is available for this guide."} Hidden mechanisms, movement directions, and safe force cannot be inferred from geometry.</p>
-      <details><summary>Check applicability and stop conditions</summary>
-        <h3>Before you begin</h3><ul className="check-list">{guide.prerequisites.map(item => <li key={item}>{item}</li>)}</ul>
-        <h3>Stop and get qualified help if...</h3><ul className="check-list">{guide.stopConditions.map(item => <li key={item}>{item}</li>)}</ul>
-      </details>
-    </div>
-    <div className={styles.grid}>
-      <div className={styles.instructions}>
+  const instructions = <div className={styles.instructions}>
+        <button type="button" className={styles.panelToggle} aria-expanded={stepsVisible} aria-controls={stepsId} onClick={() => setStepsVisible(current => !current)}>{stepsVisible ? "Hide steps" : "Show steps"} · Step {stepIndex + 1} of {guide.steps.length}</button>
+        <div id={stepsId} hidden={!stepsVisible} className={styles.stepsBody}>
         <nav className={styles.stepList} aria-label="Visual tutorial steps">
           {guide.steps.map((item, index) => <button key={index} type="button" aria-current={stepIndex === index ? "step" : undefined} onClick={() => changeStep(index)}>
             <span>{index + 1}</span>{" "}{item.title}{completed.includes(index) && <small>Explored</small>}
@@ -95,19 +87,20 @@ function Tutorial({ guide, assembly, evidence }: { guide: Guide; assembly?: Revi
           <button type="button" className="button button-secondary button-small" onClick={() => { setPaused(false); setCompleted([]); changeStep(0); }}>Restart reference-only exploration</button>
         </div>}
         {complete && !paused && <p className={styles.completion} role="status">Visual walkthrough explored. This does not mean your object is repaired, correctly identified, or safe to disassemble.</p>}
-      </div>
+        </div>
+      </div>;
+
+  return <section className={styles.tutorial} aria-labelledby={headingId}>
+    <div className={styles.grid}>
       <aside className={styles.model} aria-label="Interactive visual reference">
         {evidence && <div className={styles.evidence}><h3>Your visible reference</h3><p>Compare this photo with the model below. No automatic part alignment or exact reconstruction has been performed.</p>{evidence}</div>}
-        {hasDoorContext && <div className={styles.contextSwitch}>
-          <div role="group" aria-label="Door model views">
-            <button type="button" aria-pressed={wholeDoor} onClick={() => { setWholeDoor(true); setSelectedId(null); }}>Whole door</button>
-            <button type="button" aria-pressed={!wholeDoor} onClick={() => { setWholeDoor(false); setSelectedId(null); }}>Hinge close-up</button>
-          </div>
-          <p>{wholeDoor ? "Find the highlighted hinges on the whole door. Switch to Hinge close-up to separate the leaves, pin, and screws." : "Explore a generic hinge separately. This is a reference detail, not a scan of your door."}</p>
-        </div>}
-        {canView ? <PartsViewer key={`${stepIndex}:${wholeDoor}`} kind={wholeDoor ? "door" : guide.assemblyKind} assembly={assembly} activePartIds={wholeDoor ? ["door-hinges"] : step.partIds} onPartSelect={setSelectedId}/> : <>
+        {canView ? <div className={fullWidth ? styles.fullWidth : undefined}><PartsViewer key={`${stepIndex}:${wholeDoor}`} immersive overlay={instructions} stageControls={hasDoorContext && <div className={styles.contextSwitch} role="group" aria-label="Door model views">
+          <button type="button" aria-pressed={wholeDoor} onClick={() => { setWholeDoor(true); setSelectedId(null); }}>Whole door</button>
+          <button type="button" aria-pressed={!wholeDoor} onClick={() => { setWholeDoor(false); setSelectedId(null); }}>Hinge close-up</button>
+        </div>} kind={wholeDoor ? "door" : guide.assemblyKind} assembly={assembly} activePartIds={wholeDoor ? ["door-hinges"] : step.partIds} onPartSelect={setSelectedId}/></div> : <>
           <GuideArt slug={guide.slug} large/>
           <p className="notice">No mapped 3D reference is available for this guide. No reconstructed model or hidden parts are being substituted.</p>
+          {instructions}
         </>}
         <div className={styles.selection} aria-live="polite">
           <ScanSearch size={21}/>
@@ -116,6 +109,20 @@ function Tutorial({ guide, assembly, evidence }: { guide: Guide; assembly?: Revi
           </> : <><strong>Which part is this?</strong><p>Select a shape or its label to connect it to the relevant steps. Explode view separates the illustration; Isolate part shows only your selection.</p></>}</div>
         </div>
       </aside>
+    </div>
+    <div className={styles.details}>
+      {children}
+      <div className={styles.intro}>
+        <span className="eyebrow">IDENTIFY FIRST. ACT ONLY WITH VERIFIED GUIDANCE.</span>
+        <h2 id={headingId}>One step at a time</h2>
+        <p>Compare visible shapes with your object. Separate the model, select a part, and inspect it alone. A matching-looking model is not a diagnosis.</p>
+        <p className={styles.reference}>{assembly?.reviewed ? "Reviewed reference model, not a reconstruction of your photo." : guide.status === "draft" ? "Draft visual exploration, not an approved repair tutorial." : "No reviewed 3D model is available for this guide."} Hidden mechanisms, movement directions, and safe force cannot be inferred from geometry.</p>
+        <details><summary>Check applicability and stop conditions</summary>
+          <h3>Before you begin</h3><ul className="check-list">{guide.prerequisites.map(item => <li key={item}>{item}</li>)}</ul>
+          <h3>Stop and get qualified help if...</h3><ul className="check-list">{guide.stopConditions.map(item => <li key={item}>{item}</li>)}</ul>
+        </details>
+      </div>
+      {hasDoorContext && <p className={styles.contextHint}>{wholeDoor ? "Find the highlighted hinges on the whole door. Switch to Hinge close-up to separate the leaves, pin, and screws." : "Explore a generic hinge separately. This is a reference detail, not a scan of your door."}</p>}
     </div>
   </section>;
 }

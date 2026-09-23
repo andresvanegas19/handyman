@@ -3,3 +3,4 @@
 .next-dev/
 test-results/
 playwright-report/
+*.log

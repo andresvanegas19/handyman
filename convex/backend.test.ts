@@ -211,10 +211,10 @@ describe("private photo-to-model spatial context", () => {
 });
 
 describe("private ownership and publication", () => {
-  it("round-trips door visual cues and rejects invalid cue lengths", async () => {
+  it.each(["door", "thermostat"] as const)("round-trips %s visual cues and rejects invalid cue lengths", async (kind) => {
     const t = convexTest(schema, modules);
     const a = t.withIdentity(reviewer);
-    const guide = STARTER_GUIDES.find(item => item.assemblyKind === "door")!;
+    const guide = STARTER_GUIDES.find(item => item.assemblyKind === kind)!;
     await a.mutation(api.admin.saveDraft, { guide });
     expect((await a.query(api.admin.list, {}))[0].guide).toEqual(guide);
     const visual = guide.steps[0].visual!;
@@ -255,12 +255,12 @@ describe("private ownership and publication", () => {
     const t = convexTest(schema, modules);
     await expect(t.withIdentity(owner).mutation(api.seed.run, {})).rejects.toThrow("Administrator");
     const a = t.withIdentity(reviewer);
-    expect(await a.mutation(api.seed.run, {})).toEqual({ inserted: 6 });
+    expect(await a.mutation(api.seed.run, {})).toEqual({ inserted: STARTER_GUIDES.length });
     expect(await a.mutation(api.seed.run, {})).toEqual({ inserted: 0 });
     expect(await t.query(api.catalog.list, {})).toEqual([]);
     expect(await t.query(api.catalog.detail, { slug: STARTER_GUIDES[0].slug })).toBeNull();
     const drafts = await a.query(api.admin.list, {});
-    expect(drafts).toHaveLength(6);
+    expect(drafts).toHaveLength(STARTER_GUIDES.length);
     await expect(a.mutation(api.admin.publish, { guideVersionId: drafts[0]._id, safetyReviewed: true, rightsReviewed: true })).rejects.toThrow("draft");
     await expect(t.withIdentity(owner).query(api.admin.list, {})).rejects.toThrow("Administrator");
     await expect(t.withIdentity(owner).query(api.admin.scheduledFailures, {})).rejects.toThrow("Administrator");

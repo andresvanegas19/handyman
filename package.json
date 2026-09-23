@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -12,6 +13,9 @@
     "test:e2e": "playwright test",
     "test:e2e:visual": "playwright test --config playwright.visual.config.ts",
     "convex:dev": "convex dev",
+    "convex:logs": "convex logs --history 50",
+    "convex:logs:prod": "convex logs --prod --history 50",
+    "repair:status": "convex run repairPipeline:configuration",
     "convex:deploy": "convex deploy"
   },
   "dependencies": {

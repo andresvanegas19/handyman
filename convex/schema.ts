@@ -16,13 +16,14 @@ export default defineSchema({
   }).index("by_catalog", ["catalogId"]),
   problems: defineTable({
     workflow: v.optional(v.literal("visual")), activeRepairRunId: v.optional(v.id("repairRuns")),
+    clientRequestId: v.optional(v.string()),
     owner: v.string(), text: v.string(), consent: v.boolean(), transcript: v.string(),
     transcriptConfirmed: v.boolean(), revision: v.number(),
     state: v.union(v.literal("draft"), v.literal("transcribing"), v.literal("awaiting_transcript"),
       v.literal("analyzing"), v.literal("suggestions"), v.literal("follow_up"), v.literal("referral"), v.literal("failed")),
     activeJobId: v.optional(v.id("jobs")), failure: v.optional(v.string()), updatedAt: v.number(),
     selectedGuideVersionId: v.optional(v.id("guideVersions")),
-  }).index("by_owner", ["owner"]),
+  }).index("by_owner", ["owner"]).index("by_owner_request", ["owner", "clientRequestId"]),
   media: defineTable({
     owner: v.string(), problemId: v.id("problems"), kind: v.union(v.literal("photo"), v.literal("audio")),
     state: v.union(v.literal("reserved"), v.literal("ready")),
@@ -73,6 +74,7 @@ export default defineSchema({
     phase: phaseValidator, resumePhase: v.optional(phaseValidator), message: v.optional(v.string()),
     retryable: v.boolean(), cacheHit: v.boolean(), deadline: v.number(), updatedAt: v.number(),
     activeStageId: v.optional(v.id("repairStages")), inputDigest: v.string(),
+    intent: v.optional(v.literal("preview")), previewReason: v.optional(v.string()),
     recognition: v.optional(recognitionValidator), recognitionModel: v.optional(v.string()),
     research: v.optional(researchValidator), plan: v.optional(planValidator), planModel: v.optional(v.string()),
     mapping: v.optional(mappingValidator), mappingModel: v.optional(v.string()),
@@ -95,7 +97,8 @@ export default defineSchema({
   }).index("by_problem", ["problemId"]),
   repairSceneManifests: defineTable({
     owner: v.string(), problemId: v.id("problems"), revision: v.number(), storageId: v.id("_storage"),
-    mapping: mappingValidator, nodeNames: v.array(v.string()), triangleCount: v.number(), hash: v.string(),
+    kind: v.optional(v.literal("preview")),
+    mapping: v.optional(mappingValidator), nodeNames: v.array(v.string()), triangleCount: v.number(), hash: v.string(),
     source: v.union(v.literal("generated"), v.literal("reference")), validated: v.boolean(), policyVersion: v.string(),
     referenceAssemblyId: v.optional(v.id("assemblies")),
   }).index("by_problem", ["problemId"]).index("by_storage", ["storageId"]),

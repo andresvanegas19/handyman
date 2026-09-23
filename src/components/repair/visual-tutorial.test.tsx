@@ -6,19 +6,31 @@ import type { PartsViewerProps } from "../viewer/PartsViewer";
 import VisualTutorial from "./visual-tutorial";
 
 vi.mock("next/dynamic", () => ({
-  default: () => function MockViewer({ activePartIds, onPartSelect }: PartsViewerProps) {
-    return <div data-testid="viewer" data-active={activePartIds?.join(",")}>
+  default: () => function MockViewer({ activePartIds, onPartSelect, overlay, immersive, stageControls }: PartsViewerProps) {
+    return <div data-testid="viewer" data-active={activePartIds?.join(",")} data-immersive={immersive}>
       <button onClick={() => onPartSelect?.("hinge-pin")}>Select model pin</button>
+      {overlay}
+      {stageControls}
     </div>;
   },
 }));
 afterEach(cleanup);
 
 describe("visual repair checkpoints", () => {
+  it("overlays collapsible steps on the full-width reference without losing progress", () => {
+    render(<VisualTutorial guide={STARTER_GUIDES[0]}/>);
+    expect(screen.getByTestId("viewer")).toHaveAttribute("data-immersive", "true");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: /Hide steps/ }));
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Show steps/ }));
+    expect(screen.getByRole("checkbox")).toBeChecked();
+  });
   it("connects steps to highlighted parts and model selection back to steps", () => {
     render(<VisualTutorial guide={STARTER_GUIDES[0]}/>);
     expect(screen.getByTestId("viewer")).toHaveAttribute("data-active", "door-hinges");
     expect(screen.getByRole("button", { name: "Whole door" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByTestId("viewer")).getByRole("group", { name: "Door model views" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Hinge close-up" }));
     expect(screen.getByTestId("viewer")).toHaveAttribute("data-active", "hinge-frame,hinge-door");
     expect(screen.getByRole("button", { name: "Next checkpoint" })).toBeDisabled();

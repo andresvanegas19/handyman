@@ -152,9 +152,9 @@ describe("self-contained GLB validation", () => {
 });
 
 describe("starter catalog drafts", () => {
-  it("contains six distinct, unreviewed drafts with complete safety context", () => {
-    expect(STARTER_GUIDES).toHaveLength(6);
-    expect(new Set(STARTER_GUIDES.map((guide) => guide.slug)).size).toBe(6);
+  it("contains eight distinct, unreviewed drafts with complete safety context", () => {
+    expect(STARTER_GUIDES).toHaveLength(8);
+    expect(new Set(STARTER_GUIDES.map((guide) => guide.slug)).size).toBe(STARTER_GUIDES.length);
     for (const guide of STARTER_GUIDES) {
       expect(guide.status).toBe("draft");
       expect(guide.prerequisites.join(" ")).toContain("Unreviewed draft");

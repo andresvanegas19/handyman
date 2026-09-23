@@ -9,13 +9,14 @@ import ProblemWorkspace, { InputRevision } from "./problem-workspace";
 const {update,analyze,transcribe}=vi.hoisted(()=>({update:vi.fn(),analyze:vi.fn(),transcribe:vi.fn()}));
 vi.mock("convex/react",()=>({useQuery:vi.fn(),useConvexAuth:()=>({isLoading:false,isAuthenticated:true}),useMutation:(reference:Parameters<typeof getFunctionName>[0])=>({"problems:update":update,"problems:analyze":analyze,"problems:transcribe":transcribe})[getFunctionName(reference)]}));
 vi.mock("next/navigation",()=>({useRouter:()=>({replace:vi.fn()})}));
-vi.mock("@/lib/config",()=>({isConnected:true,hasConvex:true}));
+vi.mock("@/lib/config",()=>({isConnected:true,hasConvex:true,visualRepairEnabled:false}));
 const problem:Doc<"problems">={_id:"problem-one" as Id<"problems">,_creationTime:1,owner:"user",text:"A noisy hinge",consent:true,transcript:"The door squeaks.",transcriptConfirmed:false,revision:1,state:"awaiting_transcript",updatedAt:1};
 beforeEach(()=>{vi.mocked(useQuery).mockReset();update.mockReset().mockResolvedValue(undefined);analyze.mockReset().mockResolvedValue("job");transcribe.mockReset().mockResolvedValue("job");});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 describe("workspace revision identity",()=>{
   it("keeps editor and scene keys distinct while resetting both on a new revision",()=>{
     const consoleError=vi.spyOn(console,"error");
+    const consoleInfo=vi.spyOn(console,"info").mockImplementation(()=>{});
     let currentProblem={...problem,revision:2};
     vi.mocked(useQuery).mockImplementation((...args)=>{
       const [reference]=args;
@@ -24,6 +25,9 @@ describe("workspace revision identity",()=>{
       return undefined;
     });
     const {rerender}=render(<ProblemWorkspace id={problem._id}/>);
+    expect(screen.getByText("This repair uses the previous analysis workflow.")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:"Start a new photo + prompt visual repair"})).toHaveAttribute("href","/problems/new");
+    expect(consoleInfo).toHaveBeenCalledWith("[repair]",expect.objectContaining({event:"workspace.state",problemId:problem._id,workflow:"legacy",phase:"awaiting_transcript",enabled:false}));
     const sceneHeading=screen.getByRole("heading",{name:"Your repair, in 3D."});
     fireEvent.change(screen.getByLabelText("Description & follow-up answers"),{target:{value:"Unsaved local edit"}});
     expect(consoleError).not.toHaveBeenCalled();

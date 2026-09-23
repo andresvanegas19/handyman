@@ -4,6 +4,7 @@ export const recognitionValidator = v.object({
   outcome: v.union(v.literal("identified"), v.literal("needs_input"), v.literal("referral")),
   summary: v.string(), product: v.string(), brand: v.string(), model: v.string(), variant: v.string(),
   symptom: v.string(), features: v.array(v.string()), prerequisites: v.array(v.string()), confidence: v.number(),
+  imageDescription: v.optional(v.string()),
 });
 export const researchValidator = v.object({
   sources: v.array(v.object({ id: v.string(), url: v.string(), title: v.string(), excerpt: v.string() })),
@@ -55,6 +56,13 @@ export function compatible(a: Recognition, b: Recognition) {
 export function validatePlan(plan: RepairPlan, research: Research) {
   const parts = new Set(plan.parts.map(p => p.id));
   const sources = new Set(research.sources.map(s => s.id));
+  if (!sources.size || sources.size !== research.sources.length || research.sources.some(source => {
+    try {
+      const url = new URL(source.url);
+      return !source.id.trim() || !source.title.trim() || !source.excerpt.trim() ||
+        url.protocol !== "https:" || Boolean(url.username || url.password);
+    } catch { return true; }
+  })) throw new Error("Supporting sources require distinct IDs and valid HTTPS provenance.");
   if (!plan.title.trim() || !plan.summary.trim() || !plan.stopConditions.length || !plan.prerequisites.length ||
       !plan.steps.length || plan.steps.length > 20 || !parts.size || parts.size !== plan.parts.length ||
       new Set(plan.steps.map(s => s.id)).size !== plan.steps.length ||
@@ -76,7 +84,7 @@ export function validateMapping(plan: RepairPlan, mapping: Mapping, nodeNames: s
       if (!nodes.has(node) || assigned.has(node)) throw new Error("Missing or multiply assigned mesh.");
       // Generated labels must themselves identify the target, not merely be arbitrary mesh IDs.
       const label = normalize(target.label).split(" ").filter(w => w.length > 2);
-      const nodeWords = normalize(node).split(" ");
+      const nodeWords = normalize(node.replace(/([a-z])([A-Z])/g, "$1 $2")).split(" ");
       if (semantic && (!label.length || !label.every(word => nodeWords.includes(word)))) {
         throw new Error("mapping_unavailable: segmentation cannot establish the required component identity.");
       }

@@ -28,6 +28,7 @@ import type * as repairGeometry from "../repairGeometry.js";
 import type * as repairLifecycle from "../repairLifecycle.js";
 import type * as repairModel from "../repairModel.js";
 import type * as repairPipeline from "../repairPipeline.js";
+import type * as repairRecommendations from "../repairRecommendations.js";
 import type * as seed from "../seed.js";
 import type * as tripo from "../tripo.js";
 import type * as uploads from "../uploads.js";
@@ -61,6 +62,7 @@ declare const fullApi: ApiFromModules<{
   repairLifecycle: typeof repairLifecycle;
   repairModel: typeof repairModel;
   repairPipeline: typeof repairPipeline;
+  repairRecommendations: typeof repairRecommendations;
   seed: typeof seed;
   tripo: typeof tripo;
   uploads: typeof uploads;

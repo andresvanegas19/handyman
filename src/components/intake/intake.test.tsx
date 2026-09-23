@@ -28,6 +28,7 @@ vi.mock("convex/react", () => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
+  window.history.replaceState(null, "", "/problems/new?input=audio");
   calls.create.mockResolvedValue("problem-1");
   calls.remove.mockResolvedValue(undefined);
   calls.reserve.mockResolvedValue({ reservationId: "media-1", uploadUrl: "https://uploads.example.test" });
@@ -51,7 +52,7 @@ function fillSubmission(withPhoto = false) {
   fireEvent.click(screen.getByRole("button", { name: "Find my next step" }));
 }
 
-describe("connected intake orchestration", () => {
+describe("explicit legacy intake orchestration", () => {
   it("creates an owned text submission before requesting analysis", async () => {
     fillSubmission();
     await waitFor(() => expect(calls.push).toHaveBeenCalledWith("/problems/problem-1"));

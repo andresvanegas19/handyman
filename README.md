@@ -13,7 +13,7 @@ It saves repair text and guide ratings in the current browser tab.
    `npm ci`, and `npm run build`. No local server or tunnel is required.
 2. Deploy without environment variables for the temporary MVP. Visitors can save,
    edit, reopen, and delete repairs, select catalog examples, and rate guides.
-   Its six example guides and four procedural assemblies are clearly labeled
+   Its eight example guides and six procedural assemblies are clearly labeled
    drafts, not reviewed instructions or real Tripo outputs.
 3. For the connected MVP, configure and deploy the Convex backend as described
    below. Set `NEXT_PUBLIC_CONVEX_URL` in Vercel to that deployment's URL.
@@ -64,7 +64,9 @@ anonymous sessions. Temporary drafts are not automatically uploaded or migrated.
 ### Separate local and production deployments
 
 Keep local Convex settings in `.env.local`. Run `npm run convex:dev` and
-`npm run dev` in separate terminals for local development.
+`npm run dev` in separate terminals for local development. `npm run dev` starts
+Next.js and streams backend logs into that same terminal; `convex:dev` still
+handles backend deployment/watching. Use `npm run dev:web` for Next.js alone.
 
 For production CLI commands, use a gitignored `.env.production.local` containing
 `CONVEX_DEPLOYMENT=prod:YOUR-DEPLOYMENT` and the matching public Convex URLs.
@@ -87,17 +89,49 @@ avoids a new Firecrawl search, solution draft, and Tripo submission. Recognition
 may still be needed to establish that a different photo matches the reference.
 
 On a miss, Firecrawl searches for product documentation and reference images.
-OpenRouter defaults to `qwen/qwen3.8-flash` for user-facing responses, recognition,
-and part mapping. Configured allowlists can select other low-cost capable models;
-availability and structured-output capabilities are checked before use. Tripo generates missing
-geometry and can segment it into parts. A valid GLB alone is not a usable guide:
-every step must have valid mapped targets before the result can become ready.
+OpenRouter selects the lowest estimated-cost capable model in each stage's
+configured allowlist using current pricing and capability metadata. The default
+allowlists contain only `openai/gpt-4o-mini`; add multiple approved models to
+compare prices. An explicit `OPENROUTER_PLANNING_MODEL` overrides cost ranking
+for planning. Tripo generates missing geometry and can segment it into parts.
+A valid GLB alone is not a usable repair guide: every hands-on step must have
+valid mapped targets. When supported repair instructions are unavailable,
+the pipeline can instead complete an explicitly labeled **3D visual preview**.
+Previews use real generated geometry without invented steps, semantic labels,
+segmentation, or mechanical claims.
+If OpenRouter rate-limits a model, the stage automatically backs off and tries
+the next-cheapest eligible model (up to three attempts; explicit planning pins
+remain pinned). Persistent rate limits, missing credits, and credential errors
+are shown explicitly instead of a generic processing failure.
 
 The workspace keeps progress across refreshes. Once the authorized model loads,
 the 3D view opens automatically alongside the menu and step controls. Selecting
-a step highlights its parts and focuses the camera. Model generation, mapping,
-or browser rendering failures show an explicit error, not a text-only solution
-or a substitute procedural model.
+a step highlights its parts and focuses the camera. On phones, the model stays
+in view while the step panel scrolls independently. Loading remains visible
+through cache lookup, generation, and the final private-model download.
+Model generation, mapping, or browser rendering failures show an explicit error
+without substituting geometry or unlocking unvalidated hands-on instructions.
+Model-only previews open automatically in the same large viewport, with orbit,
+zoom, reset, private GLB download, and the image description. They do not show
+repair-step controls. Image descriptions and tentative identification remain
+available when preparation is pending or fails; failures never unlock
+unvalidated instructions.
+
+OpenRouter analyzes the uploaded image together with the written description
+before routing new runs, including problems outside supported hands-on repairs.
+The workspace shows the actual vision model and tentative identification when
+recognition succeeds; provider failures never fabricate an identification.
+The same vision request also produces **What the AI sees in your photo**: a
+plain-language image description and visible features, independent of repair
+eligibility. This private image-to-text result remains visible when a product
+name is unknown or 3D preparation is blocked; it is not repair guidance.
+Older saved results can display their existing detected features without a new
+provider request. Descriptions follow the same owner and consent restrictions
+as the uploaded image.
+Product research stays within the existing Firecrawl budget. Insufficient
+repair applicability does not by itself prevent an approximate visual model,
+but it still blocks hands-on instructions. Existing blocked runs require an
+explicit retry; deploying this change does not automatically buy new geometry.
 
 Enable `NEXT_PUBLIC_VISUAL_REPAIR_ENABLED=true` in the frontend and
 `VISUAL_REPAIR_ENABLED=true` in Convex only after configuring Firecrawl,
@@ -105,14 +139,124 @@ OpenRouter, and Tripo with explicit budgets. Provider keys are server-only.
 See [backend configuration](convex/README.md) and `.env.example`.
 The existing temporary demo, saved legacy repairs, and separate audio workflow
 remain available; this flag does not migrate earlier repairs.
+Connected intake always defaults to photo + prompt. When the frontend visual
+flag is off, it shows a setup notice and disables submission instead of silently
+creating an old-style analysis. Legacy audio/text intake is an explicit choice
+at `/problems/new?input=audio`; saved legacy repairs link to a new visual intake
+rather than automatically migrating media or provider consent.
 
 Initial consent covers all providers and automatic paid Tripo work within the
 configured limits, so there is no second recognition/generation confirmation.
 Private AI drafts are not human-reviewed guidance. Only supported low-risk
-tasks proceed; unknown applicability or unmappable parts stop the workflow.
+tasks proceed to hands-on guides; unknown applicability or unmappable parts
+stop hands-on instructions, not an otherwise available visual-only preview.
 User photos and personal cached results are not automatically shared.
 Additional web images remain source links unless reuse rights are established.
 General household intake does not guarantee generation for every object.
+
+The original written request is passed to planning along with recognition and
+source excerpts. Prompts distinguish problem data from attempts to override
+safety and prohibit replacing a reported malfunction with unrelated cleaning.
+Unsupported planning returns the schema-valid `{"plan":null,"evidence":[]}`
+outcome, which permits a model-only preview rather than inventing repair steps.
+
+Automatic drafts currently cover source-quoted visible inspection, dry exterior
+care, and hand-tightening an already visible, accessible cabinet/drawer handle
+or knob screw with a manual screwdriver. Mechanical guidance requires matching
+source evidence, known applicability, and stable non-powered furniture.
+Other procedures need a reviewed compatible reference or are referred for
+qualified help. Generated geometry cannot establish hidden anatomy, dimensions,
+safe force, or mechanical accuracy.
+
+Private photo-derived cache reuse requires matching image/text evidence and a
+fresh recognition result; compatible reviewed references can serve different
+photos. A mismatch stop invalidates the saved run and its private cache entry.
+Semantic segmentation cannot reliably identify every required repair target
+(especially small fasteners). A visual preview does not establish those targets
+or prove repair compatibility.
+
+### Cache durability and backups
+
+Convex stores compatible solutions, scene mappings, and asynchronous run state;
+its file storage holds the private photos and GLBs. This application cache is
+separate from [Convex Backup & Restore](https://docs.convex.dev/database/backup-restore).
+In the deployment dashboard, include **file storage** when creating a backup
+so restored scene records retain their model files. Automatic daily/weekly
+backups require the appropriate Convex plan; they are not enabled by deploying
+this repository.
+
+Backups do not include backend code, environment variables, or pending scheduled
+functions. Restore the matching code and configuration separately, and reconcile
+in-flight provider tasks before retrying any paid generation. A database restore
+replaces existing table data: take a fresh backup first and do not use restore
+as a cache-miss recovery mechanism.
+
+### Debugging repair progress
+
+Run `npm run dev` to see Next.js and backend repair logs in the **same terminal**.
+It loads the same development environment as Next.js, selects the deployment
+from the frontend's standard Convex URL, and streams the last 10 backend entries
+followed by live events. Ctrl+C stops both processes. No keys or backend are
+required for temporary mode; it prints that backend logging is unavailable.
+If the stream fails, an explicit terminal error appears while Next.js stays up.
+For custom hosts, configure the matching `CONVEX_SELF_HOSTED_URL`, or use the
+separate log command with the appropriate deployment.
+
+After deploying the backend, run `npm run repair:status` for a read-only
+configuration check. It reports missing backend flags, keys, model version, or
+valid daily budgets by name, never secret values. `ready: true` means those
+settings are present, not a guarantee of provider credit or model success.
+The frontend separately needs `NEXT_PUBLIC_VISUAL_REPAIR_ENABLED=true` in
+`.env.local` (or the website hosting environment) and a restart/rebuild.
+
+To stream backend logs without starting the website (last 50 entries, then live updates):
+
+```sh
+npm run convex:logs
+```
+
+For the project's production deployment, use `npm run convex:logs:prod`.
+These commands only read logs; they do not deploy code or start paid generation.
+Make sure the selected deployment matches the website's `NEXT_PUBLIC_CONVEX_URL`.
+For machine-readable output, add `-- --jsonl`.
+
+Firecrawl and OpenRouter HTTP logs are compact single-line entries with the
+provider, operation (`search`, `models`, or `completion`), HTTP status, and
+elapsed milliseconds. Each request logs a start and a response or network
+failure; search terms and response bodies are omitted.
+
+Open the browser developer tools **Console**, enable Info messages, filter for
+`[repair]`, and enable Preserve log before submitting or reopening a repair.
+Events cover intake mode, photo upload/finalization, saved pipeline phases,
+private model download/validation, viewer readiness, and step focus.
+`workspace.state` reports `workflow`, `phase`, and the frontend `enabled` flag,
+including legacy repairs that do not use the automatic visual pipeline.
+
+Backend stage claims/completions, cache decisions, provider HTTP status, Tripo
+polling, failures, and cancellation appear in the **Convex dashboard Logs** for
+the deployment used by `NEXT_PUBLIC_CONVEX_URL` (also streamed by `npm run dev`
+and `npx convex dev`). Missing/blocked server models log `model.unavailable`.
+Browser model failures also forward a fixed diagnostic code to Convex as
+`viewer.failed`, including missing/invalid models, download/render failures,
+timeouts, and expired sessions. The UI reports if diagnostic delivery fails.
+Other browser events remain in developer tools. `npm run dev:web` and `npm run start` alone
+do not stream Convex logs. Match `problemId`, `runId`, and `stageId`; `run.ready` also
+contains the `sceneId` used by browser model events.
+
+Tripo events distinguish photo upload, generation/segmentation submission,
+polling, download, validation, and storage. Failures include `operation`,
+`elapsedMs`, and a safe `code`, such as `provider_http_401`,
+`request_failed_or_timed_out`, `invalid_model_geometry`, or
+`untrusted_asset_host`. Task acknowledgments and polls include `requestId`
+for provider-dashboard reconciliation. `tripo.poll.scheduled` means another
+poll is due in 15 seconds; `stage.expired` means the stage deadline was reached.
+An `ambiguous: true` paid submission must not be blindly resubmitted.
+
+Logs contain operational metadata and categorical error codes, not raw prompts,
+photos, source excerpts, URLs, credentials, or provider response bodies. Logging
+is enabled by default; no debug flag is needed. Deploy backend changes and
+restart/redeploy the frontend to use the new logging. A frontend publish alone
+neither deploys Convex nor migrates a legacy repair to the visual workflow.
 
 ## Legacy photo-to-3D repair context with Tripo
 
@@ -151,10 +295,10 @@ for configuration and API details.
 
 ## MVP boundaries
 
-### Visual repair workflow
+### Legacy catalog walkthrough
 
-The experience follows **Photo → Diagnose → Reconstruct → Generate repair plan →
-Visualize in 3D → Guide user**, with the current capabilities made explicit:
+The legacy catalog and temporary demo are separate from the automatic visual
+repair pipeline described above. Their capabilities remain:
 
 - Photo/audio intake feeds a tentative catalog assessment in connected mode.
   Temporary mode saves input locally and requires manual example selection.
@@ -182,10 +326,28 @@ offsets, and complete the existing administrative review before publication.
 Existing saved drafts are not overwritten by seeding: edit the door example's
 `assemblyKind` to `door` and map its step IDs when upgrading an existing draft.
 
-The initial catalog contains six **unreviewed drafts**. Procedural 3D previews
+The initial catalog contains eight **unreviewed drafts**. Procedural 3D previews
 are explicitly labeled as illustrations, not Tripo outputs. Real generated assets
 need inspection, named separate parts, and human review before publication.
 Photos cannot reliably reveal hidden plumbing or electrical components.
+
+The smart thermostat planning example is available at
+`/examples/smart-thermostat-installation` and in the catalog. Its supplied image
+is stored in `public/examples/`. The `thermostat` illustration separates the
+trim plate, mounting base, terminal blocks, unidentified conductors, and screws.
+The checkpoints cover compatibility, verified labels, C-wire requirements, and
+professional installation planning; they do not assign wires to terminals or
+establish electrical safety from the photo.
+
+The photo-based washing-machine knob example is available from `/catalog` or
+directly at `/examples/washing-machine-control-knob`, with or without Convex.
+Its supplied reference image is a public catalog asset in `public/examples/`.
+The `washer-control` illustration separates the panel, dial, visible shaft, and
+knob concept; it does not model an engineered socket or provide a printable
+replacement. Its checkpoints cover identification, measurements, design review,
+and model-specific fit assessment without inferring installation directions from
+the photo. It remains a draft and requires no AI generation or backend seeding
+to explore.
 
 Only low-risk household troubleshooting is supported. Hazardous and unsupported
 repairs are referred to professionals. The legacy workflow selects published catalog guidance rather than inventing

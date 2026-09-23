@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Recognition, Research } from "./repairContracts";
+import { repairErrorCode, repairLog } from "../src/lib/repair-log";
 
 const shortText = z.string().trim().max(300);
 export const recognitionSchema = z.object({
@@ -10,6 +11,7 @@ export const recognitionSchema = z.object({
   features: z.array(shortText).max(12),
   prerequisites: z.array(shortText).max(12),
   confidence: z.number().finite().min(0).max(1),
+  imageDescription: z.string().trim().min(1).max(1200).optional(),
 }).strict();
 
 // Links are provenance only, not download authorization. Reject all IP literals
@@ -38,6 +40,27 @@ export const researchSchema = z.object({
     url: link, pageUrl: link, title: z.string().max(300),
   }).strict()).max(5),
 }).strict();
+
+export function providerFailureMessage(error: unknown, provider: "OpenRouter" | "Firecrawl"): string {
+  const code = repairErrorCode(error);
+  const messages: Record<string, string> = {
+    provider_http_429: `${provider} is temporarily rate limited (HTTP 429). Wait a little, then retry this saved repair. If it persists, an administrator must check provider rate limits and eligible models.`,
+    provider_http_401: `${provider} rejected its API credentials (HTTP 401). An administrator must update the server API key before retrying.`,
+    provider_http_402: `${provider} has insufficient credits or a billing limit (HTTP 402). An administrator must check its balance and spending limits before retrying.`,
+    provider_http_403: `${provider} denied this request (HTTP 403). Check account permissions or content restrictions; these restrictions will not be bypassed.`,
+    provider_http_404: `${provider} could not route this request (HTTP 404). An administrator must check model availability, zero-retention endpoints, and supported request parameters.`,
+    provider_http_503: `${provider} has no available provider matching the configured routing requirements (HTTP 503). Retry later or ask an administrator to review eligible models and providers.`,
+    model_or_budget_unavailable: "No configured OpenRouter model currently meets this stage's capabilities and cost limit. An administrator must review the model allowlist, optional planning pin, and budget.",
+    missing_openrouter_key: "The OpenRouter server API key is missing. An administrator must configure it before retrying.",
+    missing_firecrawl_key: "The Firecrawl server API key is missing. An administrator must configure it before retrying.",
+    invalid_configuration: `${provider} configuration is invalid. An administrator must review model, provider, and budget settings before retrying.`,
+    request_failed_or_timed_out: `${provider} could not be reached or timed out. Retry this saved repair after checking connectivity.`,
+    research_evidence_missing: "Firecrawl found no usable supporting documentation. Try a clearer product label and description; no repair instructions were invented.",
+    invalid_research_output: "Firecrawl returned an unsupported search response. An administrator must review the search integration.",
+    invalid_provider_output: `${provider} returned an incomplete or invalid structured response. Retry this saved repair; no unvalidated instructions were accepted.`,
+  };
+  return `${messages[code] ?? "Provider processing failed. Check configuration or retry."} Completed stages are retained.`;
+}
 
 export async function providerJson(response: Response, maxBytes: number): Promise<unknown> {
   if (!response.ok) throw new Error(`Provider request rejected (HTTP ${response.status}).`);
@@ -69,9 +92,18 @@ export async function providerJson(response: Response, maxBytes: number): Promis
 }
 
 export async function providerFetch(url: string, init: RequestInit): Promise<Response> {
+  const provider = url.startsWith("https://openrouter.ai/") ? "openrouter" : url.startsWith("https://api.firecrawl.dev/") ? "firecrawl" : "other";
+  const operation = url === "https://api.firecrawl.dev/v2/search" ? "search" :
+    url === "https://openrouter.ai/api/v1/models" ? "models" :
+    url === "https://openrouter.ai/api/v1/chat/completions" ? "completion" : "request";
+  const startedAt = Date.now();
+  repairLog("provider.http.started", { provider, operation }, "info", "compact");
   try {
-    return await fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(60_000) });
+    const response = await fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(60_000) });
+    repairLog("provider.http.response", { provider, operation, httpStatus: response.status, elapsedMs: Date.now() - startedAt }, response.ok ? "info" : "error", "compact");
+    return response;
   } catch {
+    repairLog("provider.http.failed", { provider, operation, elapsedMs: Date.now() - startedAt, code: "request_failed_or_timed_out" }, "error", "compact");
     // Never propagate network exceptions: they can contain request URLs or credentials.
     throw new Error("Provider request failed or timed out. No automatic retry was made.");
   }
@@ -101,8 +133,9 @@ function queryTerm(value: string): string {
 
 export async function researchProduct(input: Recognition): Promise<Research> {
   const parsed = recognitionSchema.safeParse(input);
-  if (!parsed.success || parsed.data.outcome !== "identified" || !parsed.data.product) {
-    throw new Error("Research requires an identified product.");
+  if (!parsed.success || !["identified", "referral"].includes(parsed.data.outcome) || !parsed.data.product ||
+      (parsed.data.outcome === "referral" && parsed.data.confidence < 0.85)) {
+    throw new Error("Research requires a confidently recognized product.");
   }
   const key = process.env.FIRECRAWL_API_KEY;
   if (!key) throw new Error("FIRECRAWL_API_KEY is not configured.");

@@ -10,10 +10,13 @@ export function fixtureGlb() {
     bufferViews: [{ buffer: 0, byteLength: positions.byteLength }],
     accessors: [{ bufferView: 0, componentType: 5126, count: positions.length / 3, type: "VEC3", min: [-0.5, -0.5, -0.5], max: [0.5, 0.5, 0.5] }],
     materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.6, 0.5, 0.35, 1], metallicFactor: 0, roughnessFactor: 0.7 } }],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+    meshes: [
+      { primitives: [{ attributes: { POSITION: 0 }, material: 0 }] },
+      { primitives: [{ attributes: { POSITION: 0 }, material: 0 }] },
+    ],
     nodes: [
       { name: "handle", mesh: 0, translation: [0, 0, 1], scale: [0.8, 0.2, 0.2] },
-      { name: "panel", mesh: 0, translation: [0, 0, 0], scale: [2, 3, 0.2] },
+      { name: "panel", mesh: 1, translation: [0, 0, 0], scale: [2, 3, 0.2] },
     ],
     scenes: [{ nodes: [0, 1] }],
     scene: 0,

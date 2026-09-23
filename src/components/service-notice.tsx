@@ -2,7 +2,7 @@ import { Info, ShieldCheck } from "lucide-react";
 import { hasConvex, isConnected } from "@/lib/config";
 export function PreviewNotice() {
   if (hasConvex) return null;
-  return <div className="notice"><Info size={19}/><div><strong>Preview — draft content</strong><p>These six examples let you explore Handyman. They have not been approved for repair use. No AI service is configured, and nothing you enter is uploaded.</p></div></div>;
+  return <div className="notice"><Info size={19}/><div><strong>Preview — draft content</strong><p>These examples let you explore Handyman. They have not been approved for repair use. No AI service is configured, and nothing you enter is uploaded.</p></div></div>;
 }
 export function SetupNotice() {
   if (isConnected) return null;

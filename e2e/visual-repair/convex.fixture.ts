@@ -19,7 +19,11 @@ export function useMutation(mutation: FunctionReference<"mutation">) {
       case "repairPipeline:start":
         setFixture({ result: { phase: "recognizing", retryable: false, cacheHit: false } });
         return "run-fixture";
+      case "repairPipeline:cancel":
+        setFixture({ result: { phase: "cancelled", retryable: false, cacheHit: false } });
+        return null;
       case "problems:remove": return null;
+      case "repairPipeline:reportViewerFailure": return null;
       default: throw new Error(`Unexpected browser fixture mutation: ${name}`);
     }
   };

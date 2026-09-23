@@ -1,6 +1,7 @@
 import type { AssemblyPart } from "./domain";
 
 export type RepairPhase = "queued" | "recognizing" | "checking_cache" | "researching" | "planning" | "generating_model" | "segmenting" | "mapping" | "validating" | "ready" | "needs_input" | "referral" | "failed" | "cancelled";
+export type ViewerFailureCode = "model_missing" | "manifest_invalid" | "download_failed" | "download_timeout" | "render_failed" | "render_timeout" | "session_expired";
 export interface RepairSolution {
   title: string;
   summary: string;
@@ -14,6 +15,17 @@ export interface RepairSceneManifest {
   source: "generated" | "reference";
   parts: { id: string; label: string; description: string; nodeNames: string[]; explodeOffset: number[] }[];
 }
+export interface RepairRecommendations {
+  summary: string;
+  urgent: boolean;
+  items: { title: string; description: string }[];
+  questions: string[];
+  sources: { url: string; title: string }[];
+  identification?: { product: string; brand: string; model: string; confidence: number };
+  visionModel?: string;
+  imageDescription?: string;
+  visibleFeatures?: string[];
+}
 export interface RepairPipelineState {
   phase: RepairPhase;
   message?: string;
@@ -21,6 +33,8 @@ export interface RepairPipelineState {
   cacheHit: boolean;
   solution?: RepairSolution;
   scene?: RepairSceneManifest;
+  preview?: { id: string };
+  recommendations?: RepairRecommendations;
 }
 
 /** An owner-authorized private draft, deliberately not a ReviewedAssembly. */
@@ -31,19 +45,19 @@ export interface PrivateMappedScene {
 }
 
 export const phaseLabels: Record<RepairPhase, string> = {
-  queued: "Your repair is queued",
-  recognizing: "Recognizing the visible product and checking safety",
-  checking_cache: "Checking for a compatible saved solution and model",
-  researching: "Researching product documentation and supporting sources",
-  planning: "Preparing a source-grounded repair draft",
+  queued: "Your photo and problem are queued for review",
+  recognizing: "Examining your photo and problem",
+  checking_cache: "Checking for relevant saved guidance",
+  researching: "Finding documentation and possible next steps",
+  planning: "Assessing source-supported repair options",
   generating_model: "Preparing your private 3D model",
   segmenting: "Identifying separate visible components",
   mapping: "Matching repair steps to model parts",
   validating: "Checking the solution and every 3D target",
-  ready: "Opening your mapped 3D workspace",
-  needs_input: "More information is needed",
-  referral: "This repair needs qualified help",
-  failed: "We couldn’t finish this repair",
+  ready: "Opening your 3D workspace",
+  needs_input: "A few details would help narrow this down",
+  referral: "Safer next steps for this problem",
+  failed: "Review available guidance or retry",
   cancelled: "This repair was stopped",
 };
 

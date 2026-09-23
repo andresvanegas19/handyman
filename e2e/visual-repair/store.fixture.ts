@@ -25,7 +25,16 @@ export const readyResult = {
   },
 };
 
-type FixtureResult = typeof readyResult | { phase: string; retryable: boolean; cacheHit: boolean; message?: string };
+const recommendations = {
+  summary: "The image suggests a dishwasher. Confirm the exact model before using product-specific guidance.",
+  urgent: false,
+  identification: { product: "dishwasher", brand: "Example", model: "D1", confidence: 0.94 },
+  visionModel: "qwen/qwen3.8-flash",
+  items: [{ title: "Record the displayed error", description: "Use the model's documentation to interpret an error already visible; do not run the appliance to reproduce it." }],
+  questions: ["Which error code was already on the display?"],
+  sources: [{ title: "Manufacturer support", url: "https://example.com/support" }],
+};
+type FixtureResult = (typeof readyResult | { phase: string; retryable: boolean; cacheHit: boolean; message?: string }) & { recommendations?: typeof recommendations; preview?: { id: string } };
 type FixtureState = { result: FixtureResult; token: string | null; calls: { name: string; args: Record<string, unknown> }[] };
 const listeners = new Set<() => void>();
 let state: FixtureState = {
@@ -54,7 +63,9 @@ declare global {
   interface Window {
     visualFixture: {
       ready: () => void;
+      preview: () => void;
       phase: (phase: string, message?: string) => void;
+      advice: (phase: "recognizing" | "generating_model" | "needs_input" | "referral" | "failed" | "ready" | "cancelled") => void;
       expireSession: () => void;
       calls: () => FixtureState["calls"];
     };
@@ -63,7 +74,12 @@ declare global {
 
 window.visualFixture = {
   ready: () => setFixture({ result: readyResult }),
+  preview: () => setFixture({ result: { phase: "ready", retryable: false, cacheHit: false, preview: { id: "scene-fixture" }, recommendations } }),
   phase: (phase, message) => setFixture({ result: { phase, message, retryable: phase === "failed", cacheHit: false } }),
+  advice: phase => setFixture({ result: {
+    ...(phase === "ready" ? readyResult : { phase, retryable: false, cacheHit: false }),
+    recommendations,
+  } }),
   expireSession: () => setFixture({ token: null }),
   calls: () => state.calls,
 };

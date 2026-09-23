@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Id } from "./_generated/dataModel";
 import { currentRun } from "./repairPipeline";
 import { boundedDownload, inspectGlb } from "./glb";
+import { repairErrorCode, repairLog } from "../src/lib/repair-log";
 
 const base = "https://openapi.tripo3d.ai/v3";
 const argsValidator = { runId: v.id("repairRuns"), stageId: v.id("repairStages") };
@@ -31,6 +32,7 @@ export const setTask = internalMutation({
     if (!stage || stage.runId !== args.runId || stage.providerTaskId ||
         !stage.paidSubmission || !["generating_model", "segmenting"].includes(stage.phase)) return false;
     await ctx.db.patch(stage._id, { providerTaskId: args.providerTaskId, ambiguous: false });
+    repairLog("tripo.task.acknowledged", { runId: args.runId, stageId: args.stageId, phase: stage.phase, requestId: args.providerTaskId });
     await ctx.db.patch(args.runId, stage.phase === "generating_model" ? { generationTaskId: args.providerTaskId } : { segmentationTaskId: args.providerTaskId });
     const run = await ctx.db.get(args.runId);
     const problem = run ? await ctx.db.get(run.problemId) : null;
@@ -46,10 +48,15 @@ export const setTask = internalMutation({
 export const submit = internalAction({
   args: argsValidator,
   handler: async (ctx, args): Promise<void> => {
-    if (!await ctx.runMutation(internal.repairPipeline.claim, args)) return;
+    if (!await ctx.runMutation(internal.repairPipeline.claim, args)) {
+      repairLog("tripo.submission.skipped", { ...args, code: "stale_or_already_claimed" });
+      return;
+    }
     const input = await ctx.runQuery(internal.repairPipeline.input, args);
     if (!input) return;
     let submitted = false;
+    let operation = "configuration";
+    const startedAt = Date.now();
     try {
       const key = process.env.TRIPO_API_KEY;
       if (!key || !process.env.TRIPO_MODEL_VERSION) throw new Error("Tripo is not configured.");
@@ -58,19 +65,29 @@ export const submit = internalAction({
         if (!input.run.generationTaskId) throw new Error("Generation task identity is missing.");
         source = input.run.generationTaskId;
       } else {
+        operation = "photo_read";
         const blob = await ctx.storage.get(input.photo.storageId!);
         const type = input.photo.mime === "image/jpeg" ? "jpg" : input.photo.mime === "image/png" ? "png" : input.photo.mime === "image/webp" ? "webp" : null;
         if (!blob || blob.size > 10 * 1024 * 1024 || !type) throw new Error("Invalid source photo.");
         const body = new FormData();
         body.set("file", blob, `repair.${type}`);
+        operation = "photo_upload";
+        repairLog("tripo.photo.upload.started", { ...args, bytes: blob.size });
         const response = await fetch(`${base}/files`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body, signal: AbortSignal.timeout(45_000) });
-        if (!response.ok) throw new Error("Photo upload failed.");
+        repairLog("tripo.photo.upload.response", { ...args, httpStatus: response.status }, response.ok ? "info" : "error");
+        if (!response.ok) throw new Error(`Provider request rejected (HTTP ${response.status}).`);
         source = uploaded.parse(await response.json()).data.file_token;
       }
       // The durable reservation rechecks consent/revision immediately before the billable call.
-      if (!await ctx.runMutation(internal.repairPipeline.reserveProvider, { ...args, provider: "tripo" })) return;
+      operation = "budget_reservation";
+      if (!await ctx.runMutation(internal.repairPipeline.reserveProvider, { ...args, provider: "tripo" })) {
+        repairLog("tripo.submission.skipped", { ...args, phase: input.run.phase, code: "provider_reservation_rejected" }, "warn");
+        return;
+      }
       submitted = true;
       const segmentation = input.run.phase === "segmenting";
+      operation = segmentation ? "segmentation_submission" : "generation_submission";
+      repairLog("tripo.submission.started", { ...args, phase: input.run.phase });
       const response = await fetch(`${base}/${segmentation ? "mesh/segment" : "generation/image-to-model"}`, {
         method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         signal: AbortSignal.timeout(30_000),
@@ -78,10 +95,13 @@ export const submit = internalAction({
           input: source, model: "v2.0-20260430", segmentation_granularity: "detailed", split_by_connectivity: true,
         } : { input: source, model: process.env.TRIPO_MODEL_VERSION, face_limit: 100_000, texture: true, pbr: true }),
       });
-      if (!response.ok) throw new Error("Paid request was not acknowledged.");
+      repairLog("tripo.submission.response", { ...args, phase: input.run.phase, httpStatus: response.status }, response.ok ? "info" : "error");
+      if (!response.ok) throw new Error(`Provider request rejected (HTTP ${response.status}).`);
       const task = created.parse(await response.json());
+      operation = "task_persistence";
       await ctx.runMutation(internal.repairModel.setTask, { ...args, providerTaskId: task.data.task_id });
-    } catch {
+    } catch (error) {
+      repairLog("tripo.submission.failed", { ...args, phase: input.run.phase, operation, elapsedMs: Date.now() - startedAt, code: repairErrorCode(error), ambiguous: submitted }, "error");
       await ctx.runMutation(internal.repairPipeline.fail, {
         ...args, retryable: !submitted, ambiguous: submitted,
         message: submitted ? "The paid Tripo submission outcome is unknown. Check its dashboard; this request will not be replayed." : "Tripo configuration or photo upload failed. Completed stages are retained.",
@@ -107,6 +127,7 @@ export const schedulePoll = internalMutation({
     const stage = await ctx.db.get(args.stageId);
     if (!input || !stage || stage.state !== "running" || input.run.activeStageId !== stage._id || stage.pollAttempt !== args.attempt) return;
     await ctx.scheduler.runAfter(15_000, internal.repairModel.poll, args);
+    repairLog("tripo.poll.scheduled", { ...args, phase: input.run.phase, requestId: stage.providerTaskId });
   },
 });
 export const completeModel = internalMutation({
@@ -117,20 +138,24 @@ export const completeModel = internalMutation({
     const input = await currentRun(ctx, args.runId);
     const stage = await ctx.db.get(args.stageId);
     if (!input || !stage || stage.state !== "running" || input.run.activeStageId !== stage._id ||
+        stage.runId !== args.runId || stage.phase !== input.run.phase || stage.deadline <= Date.now() ||
         !stage.providerTaskId || !["generating_model", "segmenting"].includes(stage.phase)) return false;
     const priorStorage = input.run.modelStorageId;
     await ctx.db.patch(args.runId, {
       modelStorageId: args.storageId, nodeNames: args.nodeNames, triangleCount: args.triangleCount, modelHash: args.hash,
     });
     await ctx.db.patch(stage._id, { state: "succeeded" });
-    const phase = stage.phase === "generating_model" ? "segmenting" as const : "mapping" as const;
+    const phase = input.run.intent === "preview" ? "validating" as const :
+      stage.phase === "generating_model" ? "segmenting" as const : "mapping" as const;
     const deadline = Date.now() + (phase === "segmenting" ? 900_000 : 180_000);
     const stageId = await ctx.db.insert("repairStages", {
       runId: args.runId, phase, attempt: 1, state: "queued", deadline, paidSubmission: false, ambiguous: false, pollAttempt: 0,
     });
-    await ctx.db.patch(args.runId, { phase, activeStageId: stageId, updatedAt: Date.now(), message: phase === "segmenting" ? "Separating visible components." : "Matching steps to visible components." });
+    await ctx.db.patch(args.runId, { phase, activeStageId: stageId, updatedAt: Date.now(), message: phase === "validating" ? "Checking the approximate visual reference. It is not a repair guide." : phase === "segmenting" ? "Separating visible components." : "Matching steps to visible components." });
     await ctx.scheduler.runAfter(0, phase === "segmenting" ? internal.repairModel.submit : internal.repairPipeline.work, { runId: args.runId, stageId });
     await ctx.scheduler.runAfter(deadline - Date.now(), internal.repairPipeline.expire, { runId: args.runId, stageId });
+    repairLog("stage.completed", { runId: args.runId, stageId: args.stageId, phase: stage.phase, nextPhase: phase, count: args.nodeNames.length });
+    repairLog("stage.queued", { runId: args.runId, stageId, phase, attempt: 1 });
     if (priorStorage && priorStorage !== args.storageId) await ctx.scheduler.runAfter(0, internal.cleanup.discardUnreferenced, { storageId: priorStorage });
     return true;
   },
@@ -139,37 +164,54 @@ export const poll = internalAction({
   args: { ...argsValidator, attempt: v.number() },
   handler: async (ctx, args): Promise<void> => {
     const input = await ctx.runMutation(internal.repairModel.pollClaim, args);
-    if (!input?.stage.providerTaskId) return;
+    if (!input?.stage.providerTaskId) {
+      repairLog("tripo.poll.skipped", { ...args, code: "stale_or_already_claimed" });
+      return;
+    }
     let storageId: Id<"_storage"> | undefined;
+    let operation = "task_poll";
+    const startedAt = Date.now();
     try {
+      repairLog("tripo.poll.started", { ...args, phase: input.run.phase, requestId: input.stage.providerTaskId });
       const response = await fetch(`${base}/tasks/${encodeURIComponent(input.stage.providerTaskId)}`, {
         headers: { Authorization: `Bearer ${process.env.TRIPO_API_KEY}` }, signal: AbortSignal.timeout(20_000),
       });
+      repairLog("tripo.poll.response", { ...args, httpStatus: response.status }, response.ok ? "info" : "warn");
       if (!response.ok) {
         if ((response.status === 429 || response.status >= 500) && args.attempt < 49) {
           await ctx.runMutation(internal.repairModel.schedulePoll, { ...args, attempt: args.attempt + 1 }); return;
         }
-        throw new Error("Task polling failed.");
+        throw new Error(`Provider request rejected (HTTP ${response.status}).`);
       }
       const result = status.parse(await response.json()).data;
       if (result.task_id !== input.stage.providerTaskId) throw new Error("Task identity mismatch.");
+      repairLog("tripo.task.status", { ...args, phase: input.run.phase, status: result.status },
+        ["queued", "running", "success"].includes(result.status) ? "info" : "error");
       if (result.status === "queued" || result.status === "running") {
         if (args.attempt >= 49) throw new Error("Task polling limit exceeded.");
         await ctx.runMutation(internal.repairModel.schedulePoll, { ...args, attempt: args.attempt + 1 }); return;
       }
       if (result.status !== "success" || !result.output?.model_url) throw new Error("The provider could not produce a model.");
+      operation = "model_download";
+      repairLog("tripo.model.download.started", { ...args });
       const download = await fetch(trustedModelUrl(result.output.model_url), { redirect: "error", signal: AbortSignal.timeout(45_000) });
+      repairLog("tripo.model.download.response", { ...args, httpStatus: download.status }, download.ok ? "info" : "error");
+      if (!download.ok) throw new Error(`Provider request rejected (HTTP ${download.status}).`);
       const bytes = await boundedDownload(download, 10 * 1024 * 1024);
+      operation = "model_validation";
       const inspected = inspectGlb(bytes);
+      repairLog("tripo.model.inspected", { ...args, bytes: bytes.byteLength, count: inspected.nodeNames.length });
       if (input.run.phase === "segmenting" && !inspected.mappingReady) throw new Error("The segmented model does not contain distinct named parts.");
       if (!await ctx.runQuery(internal.repairPipeline.input, { runId: args.runId, stageId: args.stageId })) return;
+      operation = "model_storage";
       const hashBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
       const hash = [...hashBytes].map(n => n.toString(16).padStart(2, "0")).join("");
       storageId = await ctx.storage.store(new Blob([bytes], { type: "model/gltf-binary" }));
       if (!await ctx.runMutation(internal.repairModel.completeModel, {
         runId: args.runId, stageId: args.stageId, storageId, nodeNames: inspected.nodeNames, triangleCount: inspected.triangleCount, hash,
       })) await ctx.runMutation(internal.cleanup.discardUnreferenced, { storageId });
-    } catch {
+    } catch (error) {
+      repairLog("tripo.poll.failed", { ...args, phase: input.run.phase, requestId: input.stage.providerTaskId, operation, elapsedMs: Date.now() - startedAt, code: repairErrorCode(error) }, "error");
       if (storageId) await ctx.runMutation(internal.cleanup.discardUnreferenced, { storageId });
       await ctx.runMutation(internal.repairPipeline.fail, {
         runId: args.runId, stageId: args.stageId, retryable: true, ambiguous: false,

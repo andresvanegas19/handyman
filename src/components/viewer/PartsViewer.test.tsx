@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import PartsViewer from "./PartsViewer";
-import type { ReviewedAssembly } from "@/lib/domain";
+import type { AssemblyKind, ReviewedAssembly } from "@/lib/domain";
 import { PREVIEW_PARTS } from "./parts";
 
 vi.mock("next/dynamic", () => ({
@@ -16,6 +16,73 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("accessible viewer fallback and controls", () => {
+  it("explodes, isolates, and restores the thermostat-specific diagram", () => {
+    render(<PartsViewer kind="thermostat" immersive/>);
+    const diagram = screen.getByRole("img", { name: /Illustrative thermostat diagram/ });
+    const assembled = diagram.innerHTML;
+    fireEvent.click(screen.getByRole("button", { name: "Explode view" }));
+    expect(diagram.innerHTML).not.toBe(assembled);
+    fireEvent.click(screen.getByRole("button", { name: "Unidentified conductors" }));
+    fireEvent.click(screen.getByRole("button", { name: "Isolate part" }));
+    expect(diagram.querySelectorAll('[opacity="0"]')).toHaveLength(4);
+    expect(screen.getByText(/Unidentified conductors selected/)).toHaveTextContent("isolated");
+    fireEvent.click(screen.getByRole("button", { name: "Reset assembly view" }));
+    expect(diagram.innerHTML).toBe(assembled);
+  });
+  it.each(Object.keys(PREVIEW_PARTS) as AssemblyKind[])("uses the correct parts and controls for the immersive %s model", (kind) => {
+    render(<PartsViewer kind={kind} immersive/>);
+    const parts = PREVIEW_PARTS[kind];
+    expect(screen.getByRole("img", { name: new RegExp(`Illustrative ${kind} diagram`) })).toBeVisible();
+    expect(screen.getAllByRole("listitem")).toHaveLength(parts.length);
+    for (const part of parts) {
+      const hide = screen.getByRole("button", { name: `Hide ${part.label}` });
+      fireEvent.click(hide);
+      expect(screen.getByRole("button", { name: `Show ${part.label}` })).toHaveAttribute("aria-pressed", "false");
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Reset assembly view" }));
+    for (const part of parts) expect(screen.getByRole("button", { name: `Hide ${part.label}` })).toHaveAttribute("aria-pressed", "true");
+  });
+  it("collapses immersive controls without resetting the model", () => {
+    render(<PartsViewer immersive overlay={<p>Tutorial overlay</p>}/>);
+    expect(screen.getByRole("region", { name: "Interactive parts viewer" })).toBeInTheDocument();
+    expect(screen.queryByText("A closer look")).not.toBeInTheDocument();
+    expect(screen.queryByText("Understand the parts, without taking anything apart.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^(INTERACTIVE 3D|PARTS VIEW)$/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explode view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide controls" }));
+    expect(screen.queryByRole("button", { name: "Assemble view" })).not.toBeInTheDocument();
+    expect(screen.getByText("Tutorial overlay")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show controls" }));
+    expect(screen.getByRole("button", { name: "Assemble view" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps visibility toggles and the fallback diagram consistent during isolation", () => {
+    render(<PartsViewer kind="knob"/>);
+    fireEvent.click(screen.getByRole("button", { name: "Knob" }));
+    fireEvent.click(screen.getByRole("button", { name: "Isolate part" }));
+    expect(screen.getByRole("button", { name: "Show Fixing screw" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Hide Knob" }));
+    const diagram = screen.getByRole("img");
+    expect(diagram.querySelectorAll('[opacity="0"]')).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Show Fixing screw" }));
+    expect(screen.getByRole("button", { name: "Isolate part" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Hide Fixing screw" })).toHaveAttribute("aria-pressed", "true");
+    expect(diagram.querySelectorAll('[opacity="0"]')).toHaveLength(2);
+  });
+  it("shows washer-specific parts and an interactive fallback rather than a cabinet fitting", () => {
+    render(<PartsViewer kind="washer-control"/>);
+    const diagram = screen.getByRole("img", { name: /Illustrative washer-control diagram/ });
+    const assembled = diagram.innerHTML;
+    for (const part of PREVIEW_PARTS["washer-control"]) expect(screen.getByText(part.description)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fixing screw" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explode view" }));
+    expect(diagram.innerHTML).not.toBe(assembled);
+    fireEvent.click(screen.getByRole("button", { name: "Detached knob / replacement concept" }));
+    fireEvent.click(screen.getByRole("button", { name: "Isolate part" }));
+    expect(screen.getByText(/replacement concept selected/)).toHaveTextContent("isolated");
+    fireEvent.click(screen.getByRole("button", { name: "Reset assembly view" }));
+    expect(diagram.innerHTML).toBe(assembled);
+  });
   it("decomposes the whole door into four selectable components without WebGL", () => {
     render(<PartsViewer kind="door" activePartIds={["door-panel"]}/>);
     const diagram = screen.getByRole("img", { name: /Illustrative door diagram/ });

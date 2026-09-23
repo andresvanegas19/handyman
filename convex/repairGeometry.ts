@@ -6,6 +6,7 @@ type GeometryDocument = {
   accessors: { bufferView: number; byteOffset?: number; componentType: number; count: number; type: string }[];
   meshes: { primitives: { attributes: { POSITION: number }; indices?: number }[] }[];
   nodes: { name?: string; mesh?: number; matrix?: number[]; translation?: number[]; rotation?: number[]; scale?: number[]; children?: number[] }[];
+  scenes: { nodes: number[] }[]; scene?: number;
 };
 const identityMatrix = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 function multiply(a: number[], b: number[]) {
@@ -35,12 +36,20 @@ function localMatrix(node: GeometryDocument["nodes"][number]) {
   ];
 }
 
-export function inspectRepairGeometry(bytes: Uint8Array, mapping: Mapping) {
+export function inspectRepairGeometry(bytes: Uint8Array, mapping?: Mapping) {
   const inspected = inspectGlb(bytes);
-  if (!inspected.mappingReady) throw new Error("The model requires distinct named visible mesh nodes.");
+  if (mapping && !inspected.mappingReady) throw new Error("The model requires distinct named visible mesh nodes.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const jsonSize = view.getUint32(12, true);
   const doc = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + jsonSize)).trim()) as GeometryDocument;
+  const visible = new Set<number>();
+  function visit(index: number) {
+    if (visible.has(index)) return;
+    visible.add(index);
+    for (const child of doc.nodes[index].children ?? []) visit(child);
+  }
+  for (const root of doc.scenes[doc.scene ?? 0].nodes) visit(root);
+  if (![...visible].some(index => doc.nodes[index].mesh !== undefined)) throw new Error("The model has no visible geometry.");
   const binaryStart = 28 + jsonSize;
   const boxes = new Map<string, { min: number[]; max: number[] }>();
   const parents = new Map<number, number>();
@@ -66,7 +75,7 @@ export function inspectRepairGeometry(bytes: Uint8Array, mapping: Mapping) {
       transform[4] * (transform[1] * transform[10] - transform[2] * transform[9]) +
       transform[8] * (transform[1] * transform[6] - transform[2] * transform[5])
     ) < 1e-12) throw new Error("Collapsed or excessive world-space mesh transform.");
-    if (node.mesh === undefined || !node.name) continue;
+    if (node.mesh === undefined) continue;
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     let hasArea = false;
     for (const primitive of doc.meshes[node.mesh].primitives) {
@@ -105,10 +114,10 @@ export function inspectRepairGeometry(bytes: Uint8Array, mapping: Mapping) {
     }
     const extents = max.map((n, axis) => n - min[axis]);
     if (!hasArea || extents.filter(n => n > 1e-8).length < 2 || Math.max(...extents) > 10_000) throw new Error("Empty, collapsed, or unreasonably scaled geometry.");
-    boxes.set(node.name, { min, max });
+    if (node.name) boxes.set(node.name, { min, max });
   }
   const meshAssignments = new Map<number, string>();
-  for (const part of mapping.parts) for (const name of part.nodeNames) {
+  for (const part of mapping?.parts ?? []) for (const name of part.nodeNames) {
     const node = doc.nodes.find(n => n.name === name);
     if (!boxes.has(name) || node?.mesh === undefined) throw new Error("Mapped component lacks finite visible bounds.");
     // Repeated instances of one fused mesh cannot stand in for different mechanical parts.

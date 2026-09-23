@@ -8,16 +8,51 @@ import GuideDetail, { PreviewGuide } from "./guide-detail";
 const {query}=vi.hoisted(()=>({query:vi.fn()}));
 vi.mock("convex/react",()=>({useQuery:query}));
 vi.mock("@/lib/config",()=>({hasConvex:true}));
-vi.mock("next/dynamic",()=>({default:()=>()=>null}));
+vi.mock("next/dynamic",()=>({default:()=>function MockViewer(){return <div data-testid="viewer"/>;}}));
 const versionId="saved-guide-version";
 const result={guide:{...STARTER_GUIDES[0],status:"published",_id:versionId},assembly:null,counts:{worked:0,partly:0,not_worked:0,total:0}};
 beforeEach(()=>{query.mockReset().mockImplementation((reference:Parameters<typeof getFunctionName>[0],args:unknown)=>args==="skip"?undefined:getFunctionName(reference)==="catalog:version"?result:null);});
 afterEach(cleanup);
 describe("explicit example pages",()=>{
+  it("opens the thermostat planning example with the correct reference photo proportions",()=>{
+    render(<PreviewGuide slug="smart-thermostat-installation"/>);
+    expect(screen.getByRole("heading",{level:1})).toHaveTextContent("Installing a Smart Thermostat? Here's What You Need to Know");
+    const photo=screen.getByRole("img",{name:/Round smart-thermostat base/});
+    expect(photo).toHaveAttribute("width","1130");
+    expect(photo).toHaveAttribute("height","832");
+    expect(screen.getByRole("link",{name:"Open full-size reference photo"})).toHaveAttribute("href","/examples/smart-thermostat-installation.png");
+    expect(screen.getByText("15-20 min planning")).toBeInTheDocument();
+    expect(screen.getByText("Version 1 · Draft preview")).toBeInTheDocument();
+    expect(query).not.toHaveBeenCalled();
+  });
+  it("places the guide details and tutorial introduction below the viewer",()=>{
+    render(<PreviewGuide slug={STARTER_GUIDES[0].slug}/>);
+    const viewer=screen.getByTestId("viewer");
+    expect(screen.getByRole("heading",{level:1}).compareDocumentPosition(viewer)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for(const element of [
+      screen.getByText(STARTER_GUIDES[0].summary),
+      screen.getByText(STARTER_GUIDES[0].duration),
+      screen.getByText(STARTER_GUIDES[0].difficulty),
+      screen.getByText("Version 1 · Draft preview"),
+      screen.getByText("Applicability, tools, and stop conditions"),
+      screen.getByRole("heading",{name:"One step at a time"}),
+      screen.getByText("Check applicability and stop conditions"),
+    ]) expect(viewer.compareDocumentPosition(element)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it("opens the photo-based washer walkthrough without publishing it",()=>{
+    render(<PreviewGuide slug="washing-machine-control-knob"/>);
+    expect(screen.getByRole("heading",{level:1})).toHaveTextContent("A second chance for a washing-machine knob");
+    expect(screen.getByRole("img",{name:/Washing-machine timer dial/})).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:"Open full-size reference photo"})).toHaveAttribute("href","/examples/washing-machine-control-knob.png");
+    expect(screen.getByText(/photo does not establish the failure/)).toBeInTheDocument();
+    expect(screen.getByText("Version 1 · Draft preview")).toBeInTheDocument();
+    expect(query).not.toHaveBeenCalled();
+  });
   it("opens a labeled draft even with a connected, empty catalog",()=>{
     render(<PreviewGuide slug={STARTER_GUIDES[0].slug}/>);
     expect(screen.getByRole("heading",{level:1})).toHaveTextContent(STARTER_GUIDES[0].title);
-    expect(screen.getByText("For exploration, not repair instructions.")).toBeInTheDocument();
+    expect(screen.queryByText("For exploration, not repair instructions.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/A qualified reviewer must approve applicability and safety/)).not.toBeInTheDocument();
     expect(screen.getByText("Version 1 · Draft preview")).toBeInTheDocument();
     expect(query).not.toHaveBeenCalled();
   });

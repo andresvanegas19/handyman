@@ -1,4 +1,10 @@
+import Image from "next/image";
+import { GUIDE_PHOTOS } from "@/lib/catalog";
+import styles from "./guide-photo.module.css";
+
 export default function GuideArt({ slug, large = false }: { slug: string; large?: boolean }) {
+  const photo = GUIDE_PHOTOS[slug];
+  if (photo) return <div className={styles.cardPhoto}><Image src={photo.src} alt={photo.alt} fill sizes={large ? "(max-width: 800px) 100vw, 600px" : "(max-width: 600px) 100vw, (max-width: 1000px) 50vw, 400px"}/></div>;
   const kind = slug.includes("hinge") ? "hinge" : slug.includes("knob") ? "knob" : slug.includes("drawer") ? "drawer" : slug.includes("window") ? "window" : slug.includes("weather") ? "weather" : "aerator";
   return <div className={`guide-art art-${kind} ${large ? "art-large" : ""}`} aria-hidden="true"><span className="art-circle"/><div className="art-object"><svg width={large ? 180 : 135} height={large ? 160 : 120} viewBox="0 0 180 160" fill="none">
     {kind==="hinge"&&<g transform="translate(25 18)"><rect x="5" y="9" width="51" height="106" rx="5" fill="#b6a174" stroke="#8d7e59" strokeWidth="2"/><rect x="64" y="9" width="51" height="106" rx="5" fill="#c8b68d" stroke="#8d7e59" strokeWidth="2"/><rect x="54" y="3" width="12" height="119" rx="5" fill="#9cab9c"/><ellipse cx="60" cy="3" rx="9" ry="5" fill="#c6cec1"/>{[30,89].flatMap(x=>[32,62,93].map(y=><g key={`${x}-${y}`}><circle cx={x} cy={y} r="6" fill="#e7d9b9" stroke="#97855e"/><path d={`M${x-3} ${y}h6m-3-3v6`} stroke="#97855e"/></g>))}</g>}
